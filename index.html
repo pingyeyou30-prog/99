@@ -639,6 +639,7 @@
     }
 
     function normalizeKana(s) {
+      s = s.replace(/^[eE]/, 'いち');                              // 先頭の「E」は「いん」と聞こえたもの
       s = s.replace(/[cC]+/g, 'し');                              // 「C」は「シー」と聞こえたもの
       s = s.replace(/[〇一二三四五六七八九十]/g, c => kanjiKana[c]);
       s = s.replace(/[ぁぃぅぇぉ]/g, '');                         // 小さい「ぇ」など（しぇ→し）
@@ -656,9 +657,18 @@
               .replace(/よん/g, 'し')
               .replace(/なな/g, 'しち')
               .replace(/きゅう/g, 'く')
-              .replace(/(し|ご|ろく|しち)は(?!ち)/g, '$1はち');      // 「しは」「ごは」→「しはち」「ごはち」（九九の読みのときだけ）
+              .replace(/(し|ご|ろく|しち)は(?!ち)/g, '$1はち')       // 「しは」「ごは」→「しはち」「ごはち」（九九の読みのときだけ）
+              .replace(/[時分秒個円人日月年歳回度番位点]+$/, '');      // 「24分」「28時」のように、答えのうしろに単位がついたもの
     }
     const toKana = (raw) => kanaVariants(raw)[0];
+
+    // ✕にしてよいのは「式は合っていて答えだけちがう」「答えだけをいってちがう」「別の問題の九九をいった」ときだけ。
+    // 聞き違い（先頭がちがう）で✕にならないよう、九九の答え・唱えことばの一覧を持っておく。
+    const ANSWER_KANA = new Set(), CHANT_KANA = new Set();
+    for (let a = 1; a <= 9; a++) for (let b = 1; b <= 9; b++) {
+      ANSWER_KANA.add(kanaNum(a * b));
+      CHANT_KANA.add(kanaNum(a) + kanaNum(b) + kanaNum(a * b));
+    }
 
     function startListening() {
       if (!voiceOn || listening || isAnimating || !gameScreen.classList.contains('active')) return;
@@ -709,7 +719,8 @@
             // 「じゅう」の落ちは数字（アラビア数字）で返ってきた場合だけの現象なので、漢数字のときは使わない
             if (!/[一二三四五六七八九〇十]/.test(String(t).normalize('NFKC')) && dc.some(d => partialDigits.includes(d))) { ok = true; shown = t; how = 'digits-partial'; break; }
             if (dc.some(d => leftDigits.includes(d))) continue;           // 式の途中だけ → 判定しない
-            if (wrongShown === null) wrongShown = t;
+            // 式の数字から始まっている（答えだけちがう）か、答えだけ（1〜2けた）をいったときだけ✕にする
+            if (wrongShown === null && dc.some(d => d.startsWith('' + currentA + currentB) || d.length <= 2)) wrongShown = t;
             continue;
           }
           // ② かな・漢字まじりはひらがなに直して比べる（数字の読み方の候補ごと）
@@ -724,11 +735,11 @@
             return !KANA_VOCAB.test(pre) && pre.length <= 8 && (/[一-龥々]/.test(pre) || only.length >= 4);
           })) { ok = true; shown = t; how = 'kana-lenient'; break; }
           // ゆるい判定B: 式は合っていて、答えの部分だけ別の漢字に化けた（「7に重視」「インク学」など）
-          if (ks.some(k => k.length > left2.length && k.startsWith(left2) && /^[一-龥々]{1,6}$/.test(k.slice(left2.length)))) {
+          if (ks.some(k => k.length > left2.length && k.startsWith(left2) && !KANA_VOCAB.test(k.slice(left2.length)) && k.length - left2.length <= 6)) {
             ok = true; shown = t; how = 'kana-lenient-tail'; break;
           }
           if (ks.some(k => leftParts.includes(k))) continue;                  // 式の途中だけ → 判定しない
-          if (wrongShown === null && ks.some(k => KANA_VOCAB.test(k))) wrongShown = t;
+          if (wrongShown === null && ks.some(k => KANA_VOCAB.test(k) && (k.startsWith(left2) || ANSWER_KANA.has(k) || CHANT_KANA.has(k)))) wrongShown = t;
         }
 
         // 調整用ログ: 聞こえた候補ぜんぶと、判定結果
@@ -747,19 +758,17 @@
         });
 
         if (ok) {
-          voiceStatus.textContent = '👂「' + shown + '」';
           currentInput = String(ans);
           updateInputDisplay();
           checkAnswer(true);
         } else if (wrongShown !== null) {
-          voiceStatus.textContent = '👂「' + wrongShown + '」';
           currentInput = "";
           updateInputDisplay();
           checkAnswer(false);
         }
         else {
-          // 九九のことばに聞こえない / 式の途中だけ → 判定せず聞きなおし（聞こえた内容は表示）
-          voiceStatus.textContent = '👂「' + res[0].transcript + '」…もういちど';
+          // 九九のことばに聞こえない / 式の途中だけ → 判定せず聞きなおし（聞こえた内容は画面に出さない）
+          voiceStatus.textContent = '🎤 もういちど いってね';
         }
       };
       recognizer.onerror = (ev) => {
