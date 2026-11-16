@@ -569,16 +569,58 @@
       return (t > 1 ? kanaDigit[t] : '') + 'じゅう' + (o ? kanaDigit[o] : '');
     }
 
-    // 数字（と記号・空白）だけでできた認識結果なら、数字の並びを返す。かな・漢字が混じるなら null
-    function digitsOnly(raw) {
+    // 漢数字の連なり（例: 三五十五）を、数字列にする読み方の候補をぜんぶ返す。
+    // 「三五」は35（さん・ご）、「十五」は15、のどれにも読めるので、区切り方を全部試す。
+    const KVAL = {'〇':0, '一':1, '二':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9};
+    function kanjiRunDigits(run) {
+      const out = new Set();
+      const isD = (c) => c !== undefined && c in KVAL && KVAL[c] > 0;
+      (function rec(i, acc) {
+        if (out.size > 200) return;
+        if (i >= run.length) { out.add(acc); return; }
+        const c = run[i];
+        if (c === '十') {
+          rec(i + 1, acc + '10');
+          if (isD(run[i + 1])) rec(i + 2, acc + '1' + KVAL[run[i + 1]]);
+        } else {
+          rec(i + 1, acc + KVAL[c]);
+          if (run[i + 1] === '十') {
+            rec(i + 2, acc + KVAL[c] + '0');
+            if (isD(run[i + 2])) rec(i + 3, acc + KVAL[c] + KVAL[run[i + 2]]);
+          }
+        }
+      })(0, '');
+      return [...out];
+    }
+
+    // 数字・漢数字・記号だけでできた認識結果なら、数字列の候補を返す（かなや他の文字が混じるなら null）
+    function numericCandidates(raw) {
       const s = String(raw).normalize('NFKC');
-      if (/[ぁ-んァ-ヶ一-龥]/.test(s)) return null;
-      const d = s.replace(/\D/g, '');
-      return d === '' ? null : d;
+      if (/[^\s\d一二三四五六七八九〇十×xX*=.,、。\-−ー・]/.test(s)) return null;
+      const t = s.replace(/[\s×xX*=.,、。\-−ー・]/g, '');
+      if (!/[\d一二三四五六七八九〇十]/.test(t)) return null;
+      let combos = [''];
+      t.split(/([一二三四五六七八九〇十]+)/).forEach((p, i) => {
+        if (p === '') return;
+        const opts = i % 2 === 1 ? kanjiRunDigits(p) : [p];
+        combos = combos.flatMap(c => opts.map(o => c + o)).slice(0, 300);
+      });
+      return [...new Set(combos)];
+    }
+
+    // 長音「ー」を母音に直す用（しーち → しいち）
+    const VOWEL_ROWS = {
+      'あ': 'ぁあかがさざただなはばぱまゃやらわ', 'い': 'ぃいきぎしじちぢにひびぴみり',
+      'う': 'ぅうくぐすずつづぬふぶぷむゅゆるゔ', 'え': 'ぇえけげせぜてでねへべぺめれ',
+      'お': 'ぉおこごそぞとどのほぼぽもょよろをん'
+    };
+    function vowelOf(ch) {
+      for (const v in VOWEL_ROWS) if (VOWEL_ROWS[v].includes(ch)) return v;
+      return '';
     }
 
     // 認識結果（漢字・数字・かな・カタカナ混じり）を、比べやすいひらがなに統一する。
-    // 「23」は「にじゅうさん」とも「に さん」とも読めるので、読み方の候補をすべて返す。
+    // 「23」は「にじゅうさん」とも「に さん」とも、「ー」は伸ばす/消すの両方がありうるので、候補をすべて返す。
     function kanaVariants(raw) {
       let s = String(raw).normalize('NFKC');
       s = s.replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)); // カタカナ→ひらがな
@@ -591,13 +633,16 @@
         }
         combos = combos.flatMap(c => opts.map(o => c + o)).slice(0, 64);
       });
+      const expandLong = (c) => c.replace(/([ぁ-ん])ー/g, (m, ch) => ch + vowelOf(ch));
+      combos = combos.flatMap(c => { const e = expandLong(c); return e === c ? [c] : [c, e]; });
       return [...new Set(combos.map(normalizeKana))];
     }
 
     function normalizeKana(s) {
+      s = s.replace(/[cC]+/g, 'し');                              // 「C」は「シー」と聞こえたもの
       s = s.replace(/[〇一二三四五六七八九十]/g, c => kanjiKana[c]);
-      s = s.replace(/ゅー/g, 'ゅう');
-      s = s.replace(/[が\s×xX*=。、,.!！?？]/g, '');          // 「が」や記号・空白は無視
+      s = s.replace(/[ぁぃぅぇぉ]/g, '');                         // 小さい「ぇ」など（しぇ→し）
+      s = s.replace(/[が\s×xX*=。、,.!！?？ー]/g, '');          // 「が」や記号・空白・のこった長音は無視
       s = s.replace(/(です|だよ|かな|でしょう)$/, '');
       // 九九の特別な読み方を、ふつうの読み方にそろえる
       return s.replace(/^いん/, 'いち')                          // いんいち・いんに…
@@ -645,33 +690,44 @@
         const full = kanaNum(currentA) + kanaNum(currentB) + kanaNum(ans); // 例: さんいちさん
         const only = kanaNum(ans);                                          // 答えだけでもOK
         const leftParts = [kanaNum(currentA), kanaNum(currentA) + kanaNum(currentB)];
-        const fullDigits = '' + currentA + currentB + ans;   // 例: 3721
+        const left2 = kanaNum(currentA) + kanaNum(currentB);                  // 式の部分（かな）
+        const fullDigits = '' + currentA + currentB + ans;                    // 例: 3721
         const onlyDigits = '' + ans;
         const leftDigits = ['' + currentA, '' + currentA + currentB];
+        // 認識が「じゅう」を落とすことが多い: 36,8 / 56,3 / 58,0 など（答えの十の位か一の位だけ残る）
+        const partialDigits = ans >= 10
+          ? ['' + currentA + currentB + Math.floor(ans / 10), '' + currentA + currentB + (ans % 10)] : [];
 
         let ok = false, shown = null, wrongShown = null, how = '';
         for (let i = 0; i < res.length; i++) {
           const t = res[i].transcript;
-          // ① 数字だけで返ってきた場合（「3721」「37 21」「3×7=21」など）は数字の並びで比べる
-          const d = digitsOnly(t);
-          if (d !== null) {
-            if (d === fullDigits || d === onlyDigits) { ok = true; shown = t; how = 'digits-exact'; break; }
-            if (d.endsWith(onlyDigits) && d.slice(0, d.length - onlyDigits.length) === '' + currentA + currentB) { ok = true; shown = t; how = 'digits-lenient'; break; }
-            if (wrongShown === null && !leftDigits.includes(d)) wrongShown = t;
+          // ① 数字・漢数字だけで返ってきた場合（「3721」「37 21」「七五三五」など）は数字の並びで比べる
+          const dc = numericCandidates(t);
+          if (dc !== null) {
+            if (dc.some(d => d === fullDigits || d === onlyDigits)) { ok = true; shown = t; how = 'digits-exact'; break; }
+            if (dc.some(d => d.endsWith(onlyDigits) && d.slice(0, d.length - onlyDigits.length) === '' + currentA + currentB)) { ok = true; shown = t; how = 'digits-lenient'; break; }
+            // 「じゅう」の落ちは数字（アラビア数字）で返ってきた場合だけの現象なので、漢数字のときは使わない
+            if (!/[一二三四五六七八九〇十]/.test(String(t).normalize('NFKC')) && dc.some(d => partialDigits.includes(d))) { ok = true; shown = t; how = 'digits-partial'; break; }
+            if (dc.some(d => leftDigits.includes(d))) continue;           // 式の途中だけ → 判定しない
+            if (wrongShown === null) wrongShown = t;
             continue;
           }
           // ② かな・漢字まじりはひらがなに直して比べる（数字の読み方の候補ごと）
           const ks = kanaVariants(t);
-          if (ks.some(k => k === full || k === only)) { ok = true; shown = t; how = 'kana-exact'; break; } // 候補のどれかが合っていれば正解
-          // ゆるい判定: 最後の答えが合っていて、前半が聞き違い（「死後」など九九のことばでない文字）なら正解にする
+          if (ks.some(k => k === full || k === only)) { ok = true; shown = t; how = 'kana-exact'; break; }
+          // ゆるい判定A: 最後の答えが合っていて、前半が聞き違い（「死後」「ちは」など九九のことばでない文字）
           if (ks.some(k => {
             if (!k.endsWith(only)) return false;
             const pre = k.slice(0, k.length - only.length);
-            if (pre === '' || pre === kanaNum(currentA) + kanaNum(currentB)) return true;
-            // 前半に漢字が含まれる（「死後」など、しごの聞き違い）ときだけ許す。かなだけの雑音は許さない
-            return !KANA_VOCAB.test(pre) && /[一-龥々]/.test(pre) && pre.length <= 8;
+            if (pre === '' || pre === left2) return true;
+            // かなだけの雑音を拾わないよう、前半に漢字があるか、答えが長い（4文字以上）ときだけ許す
+            return !KANA_VOCAB.test(pre) && pre.length <= 8 && (/[一-龥々]/.test(pre) || only.length >= 4);
           })) { ok = true; shown = t; how = 'kana-lenient'; break; }
-          if (ks.some(k => leftParts.includes(k))) continue;                           // 式の途中だけ → 判定しない
+          // ゆるい判定B: 式は合っていて、答えの部分だけ別の漢字に化けた（「7に重視」「インク学」など）
+          if (ks.some(k => k.length > left2.length && k.startsWith(left2) && /^[一-龥々]{1,6}$/.test(k.slice(left2.length)))) {
+            ok = true; shown = t; how = 'kana-lenient-tail'; break;
+          }
+          if (ks.some(k => leftParts.includes(k))) continue;                  // 式の途中だけ → 判定しない
           if (wrongShown === null && ks.some(k => KANA_VOCAB.test(k))) wrongShown = t;
         }
 
@@ -685,8 +741,8 @@
           heard: Array.from(res).map(r => ({
             text: r.transcript,
             confidence: Math.round(r.confidence * 100) / 100,
-            digits: digitsOnly(r.transcript),
-            kana: digitsOnly(r.transcript) === null ? kanaVariants(r.transcript) : null
+            digits: numericCandidates(r.transcript),
+            kana: numericCandidates(r.transcript) === null ? kanaVariants(r.transcript) : null
           }))
         });
 
