@@ -593,12 +593,19 @@
           const d = digitsOnly(t);
           if (d !== null) {
             if (d === fullDigits || d === onlyDigits) { ok = true; shown = t; break; }
+            if (d.endsWith(onlyDigits) && d.slice(0, d.length - onlyDigits.length) === '' + currentA + currentB) { ok = true; shown = t; break; }
             if (wrongShown === null && !leftDigits.includes(d)) wrongShown = t;
             continue;
           }
           // ② かな・漢字まじりはひらがなに直して比べる（数字の読み方の候補ごと）
           const ks = kanaVariants(t);
           if (ks.some(k => k === full || k === only)) { ok = true; shown = t; break; } // 候補のどれかが合っていれば正解
+          // ゆるい判定: 最後の答えが合っていて、前半が聞き違い（「死後」など九九のことばでない文字）なら正解にする
+          if (ks.some(k => {
+            if (!k.endsWith(only)) return false;
+            const pre = k.slice(0, k.length - only.length);
+            return pre === '' || pre === kanaNum(currentA) + kanaNum(currentB) || !KANA_VOCAB.test(pre);
+          })) { ok = true; shown = t; break; }
           if (ks.some(k => leftParts.includes(k))) continue;                           // 式の途中だけ → 判定しない
           if (wrongShown === null && ks.some(k => KANA_VOCAB.test(k))) wrongShown = t;
         }
