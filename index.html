@@ -514,32 +514,43 @@
       return d === '' ? null : d;
     }
 
-    // 認識結果（漢字・数字・かな・カタカナ混じり）を、比べやすいひらがなに統一する
-    function toKana(raw) {
+    // 認識結果（漢字・数字・かな・カタカナ混じり）を、比べやすいひらがなに統一する。
+    // 「23」は「にじゅうさん」とも「に さん」とも読めるので、読み方の候補をすべて返す。
+    function kanaVariants(raw) {
       let s = String(raw).normalize('NFKC');
       s = s.replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)); // カタカナ→ひらがな
-      s = s.replace(/\d+/g, m => m.length <= 2
-        ? kanaNum(parseInt(m, 10))
-        : m.split('').map(d => kanaDigit[d] || '').join(''));
+      let combos = [''];
+      s.split(/(\d+)/).forEach((p, i) => {
+        let opts = [p];
+        if (i % 2 === 1) { // 数字の連なり
+          const per = p.split('').map(d => kanaDigit[d] || '').join('');   // 1けたずつ: 2,3 → にさん
+          opts = p.length <= 2 ? [kanaNum(parseInt(p, 10)), per] : [per];  // まとめて: 23 → にじゅうさん
+        }
+        combos = combos.flatMap(c => opts.map(o => c + o)).slice(0, 64);
+      });
+      return [...new Set(combos.map(normalizeKana))];
+    }
+
+    function normalizeKana(s) {
       s = s.replace(/[〇一二三四五六七八九十]/g, c => kanjiKana[c]);
       s = s.replace(/ゅー/g, 'ゅう');
       s = s.replace(/[が\s×xX*=。、,.!！?？]/g, '');          // 「が」や記号・空白は無視
       s = s.replace(/(です|だよ|かな|でしょう)$/, '');
       // 九九の特別な読み方を、ふつうの読み方にそろえる
-      s = s.replace(/^いん/, 'いち')                          // いんいち・いんに…
-           .replace(/ににん/g, 'にに')
-           .replace(/さざん/g, 'さんさん')
-           .replace(/さぶろく/g, 'さんろく')
-           .replace(/さんぱ/g, 'さんはち')
-           .replace(/はっぱ/g, 'はちはち')
-           .replace(/はっく/g, 'はちく')
-           .replace(/ろっく/g, 'ろくく')
-           .replace(/よん/g, 'し')
-           .replace(/なな/g, 'しち')
-           .replace(/きゅう/g, 'く')
-           .replace(/は(?!ち)/g, 'はち');                      // 「しは」「ごは」→「しはち」「ごはち」
-      return s;
+      return s.replace(/^いん/, 'いち')                          // いんいち・いんに…
+              .replace(/ににん/g, 'にに')
+              .replace(/さざん/g, 'さんさん')
+              .replace(/さぶろく/g, 'さんろく')
+              .replace(/さんぱ/g, 'さんはち')
+              .replace(/はっぱ/g, 'はちはち')
+              .replace(/はっく/g, 'はちく')
+              .replace(/ろっく/g, 'ろくく')
+              .replace(/よん/g, 'し')
+              .replace(/なな/g, 'しち')
+              .replace(/きゅう/g, 'く')
+              .replace(/は(?!ち)/g, 'はち');                      // 「しは」「ごは」→「しはち」「ごはち」
     }
+    const toKana = (raw) => kanaVariants(raw)[0];
 
     function startListening() {
       if (!voiceOn || listening || isAnimating || !gameScreen.classList.contains('active')) return;
@@ -556,13 +567,14 @@
       recognizer = new SpeechRec();
       recognizer.lang = 'ja-JP';
       recognizer.interimResults = false;
-      recognizer.maxAlternatives = 5;
+      recognizer.maxAlternatives = 10;
       recognizer.continuous = false;
 
       recognizer.onstart = () => {
         listening = true;
         voiceStatus.textContent = '🎤 こたえをいってね';
       };
+      recognizer.onspeechstart = () => { voiceStatus.textContent = '🎤 きいてるよ…'; };
       recognizer.onresult = (ev) => {
         if (isAnimating) return;
         const res = ev.results[ev.results.length - 1];
@@ -584,10 +596,11 @@
             if (wrongShown === null && !leftDigits.includes(d)) wrongShown = t;
             continue;
           }
-          // ② かな・漢字まじりはひらがなに直して比べる
-          const k = toKana(t);
-          if (k === full || k === only) { ok = true; shown = t; break; } // 候補のどれかが合っていれば正解
-          if (wrongShown === null && KANA_VOCAB.test(k) && !leftParts.includes(k)) wrongShown = t;
+          // ② かな・漢字まじりはひらがなに直して比べる（数字の読み方の候補ごと）
+          const ks = kanaVariants(t);
+          if (ks.some(k => k === full || k === only)) { ok = true; shown = t; break; } // 候補のどれかが合っていれば正解
+          if (ks.some(k => leftParts.includes(k))) continue;                           // 式の途中だけ → 判定しない
+          if (wrongShown === null && ks.some(k => KANA_VOCAB.test(k))) wrongShown = t;
         }
 
         if (ok) {
@@ -601,7 +614,10 @@
           updateInputDisplay();
           checkAnswer(false);
         }
-        // 九九のことばに聞こえない / 式の途中だけ → 何もせず聞きなおし
+        else {
+          // 九九のことばに聞こえない / 式の途中だけ → 判定せず聞きなおし（聞こえた内容は表示）
+          voiceStatus.textContent = '👂「' + res[0].transcript + '」…もういちど';
+        }
       };
       recognizer.onerror = (ev) => {
         if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
