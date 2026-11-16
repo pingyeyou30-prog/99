@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>九九学習アプリ</title>
+  <style>
+    :root {
+      --primary: #4CAF50;
+      --bg: #f5f7fa;
+      --text: #333;
+    }
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'Meiryo', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      touch-action: manipulation;
+    }
+    h1 {
+      text-align: center;
+      font-size: 24px;
+      color: var(--primary);
+      margin: 20px 0;
+    }
+    .screen {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+      background: #fff;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    .screen.active {
+      display: flex;
+    }
+
+    /* Setup Screen */
+    #setup-screen {
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .setting-group {
+      margin-bottom: 25px;
+      padding: 15px;
+      background: #fdfdfd;
+      border: 2px solid #eee;
+      border-radius: 12px;
+    }
+    .setting-group label {
+      display: flex;
+      align-items: center;
+      font-size: 18px;
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+    .setting-group input[type="radio"],
+    .setting-group input[type="checkbox"] {
+      transform: scale(1.5);
+      margin-right: 15px;
+    }
+    select {
+      width: 100%;
+      padding: 10px;
+      font-size: 18px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      margin-bottom: 10px;
+      background-color: #fff;
+    }
+    #start-btn {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 15px;
+      font-size: 24px;
+      font-weight: bold;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+      transition: transform 0.1s;
+      margin-top: auto;
+    }
+    #start-btn:active {
+      transform: translateY(2px);
+      box-shadow: 0 2px 3px rgba(0,0,0,0.2);
+    }
+
+    /* Game Screen */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 15px;
+      background: #eee;
+    }
+    #back-btn {
+      padding: 8px 15px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      background: #ccc;
+      cursor: pointer;
+    }
+    .score {
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    .question-area {
+      text-align: center;
+      font-size: 48px;
+      font-weight: bold;
+      padding: 20px 0;
+      color: #222;
+      position: relative;
+    }
+    .yomi-area {
+      font-size: 22px;
+      color: #666;
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 5px;
+      height: 30px;
+    }
+    #answer-input {
+      display: inline-block;
+      min-width: 60px;
+      border-bottom: 4px solid var(--text);
+      color: var(--primary);
+    }
+    .blink {
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    .voice-status {
+      display: none;
+      text-align: center;
+      font-size: 18px;
+      font-weight: bold;
+      color: #1565c0;
+      background: #e3f2fd;
+      padding: 6px 10px;
+    }
+
+    /* Hint Area */
+    .hint-area {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px;
+      overflow: hidden;
+      transition: opacity 0.3s ease;
+    }
+    .hint-wrapper {
+      position: relative;
+      display: inline-block;
+      margin: 20px 20px 50px 50px; /* 括弧と数字のための余白 */
+    }
+    .bracket-left {
+      position: absolute;
+      left: -15px;
+      top: -5px;
+      bottom: -5px;
+      border-left: 2px solid #666;
+      border-top: 2px solid #666;
+      border-bottom: 2px solid #666;
+      width: 10px;
+    }
+    .num-left {
+      position: absolute;
+      left: -45px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+      text-shadow: 0 0 2px rgba(0,0,0,0.35);
+    }
+    .bracket-bottom {
+      position: absolute;
+      left: -5px;
+      right: -5px;
+      bottom: -15px;
+      border-bottom: 2px solid #666;
+      border-left: 2px solid #666;
+      border-right: 2px solid #666;
+      height: 10px;
+    }
+    .num-bottom {
+      position: absolute;
+      bottom: -50px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+      text-shadow: 0 0 2px rgba(0,0,0,0.35);
+    }
+    .grid-container {
+      display: grid;
+      column-gap: 20px;
+      row-gap: 3px;
+      justify-content: center;
+      align-content: center;
+    }
+    .dot {
+      border-radius: 50%;
+      background-color: #ccc;
+      box-shadow: inset -2px -2px 4px rgba(0,0,0,0.2);
+    }
+
+    /* Tenkey Area */
+    .tenkey-area {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      padding: 15px;
+      background: #f9f9f9;
+      border-top: 2px solid #eee;
+      padding-bottom: max(15px, env(safe-area-inset-bottom));
+    }
+    .key-btn {
+      background: #fff;
+      border: 2px solid #ddd;
+      border-radius: 12px;
+      font-size: 28px;
+      font-weight: bold;
+      padding: 15px 0;
+      color: #333;
+      cursor: pointer;
+      box-shadow: 0 4px 0 #ddd;
+      transition: all 0.1s;
+      touch-action: manipulation;
+    }
+    .key-btn:active {
+      transform: translateY(4px);
+      box-shadow: 0 0 0 #ddd;
+    }
+    .key-btn.clear {
+      background: #ffcdd2;
+      border-color: #ef9a9a;
+      box-shadow: 0 4px 0 #ef9a9a;
+      color: #c62828;
+    }
+    .key-btn.clear:active {
+      box-shadow: 0 0 0 #ef9a9a;
+    }
+    .key-btn.ok {
+      background: #c8e6c9;
+      border-color: #a5d6a7;
+      box-shadow: 0 4px 0 #a5d6a7;
+      color: #2e7d32;
+    }
+    .key-btn.ok:active {
+      box-shadow: 0 0 0 #a5d6a7;
+    }
+
+    /* Overlay for Animation */
+    #overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(255,255,255,0.8);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+    #overlay-icon {
+      font-size: 150px;
+      transform: scale(0);
+      opacity: 0;
+    }
+    .anim-maru {
+      animation: pop 0.6s ease-out forwards;
+      color: red;
+    }
+    .anim-batsu {
+      animation: shake 0.5s ease-in-out forwards;
+      color: blue;
+    }
+    @keyframes pop {
+      0% { transform: scale(0); opacity: 0; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); opacity: 1; }
+      20%, 60% { transform: translateX(-20px); }
+      40%, 80% { transform: translateX(20px); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Setup Screen -->
+  <div id="setup-screen" class="screen active">
+    <h1>九九学習アプリ</h1>
+
+    <div class="setting-group">
+      <label><input type="radio" name="mode" value="random" checked> ランダム</label>
+      <select id="random-count">
+        <option value="10">10問</option>
+        <option value="20">20問</option>
+        <option value="30">30問</option>
+        <option value="40">40問</option>
+        <option value="50">50問</option>
+        <option value="60">60問</option>
+        <option value="70">70問</option>
+        <option value="80">80問</option>
+        <option value="81">ぜんぶ (81問)</option>
+      </select>
+
+      <label style="margin-top: 15px;"><input type="radio" name="mode" value="junban"> じゅんばんにれんしゅう</label>
+      <select id="junban-select">
+        <option value="1">1のだん</option>
+        <option value="2">2のだん</option>
+        <option value="3">3のだん</option>
+        <option value="4">4のだん</option>
+        <option value="5">5のだん</option>
+        <option value="6">6のだん</option>
+        <option value="7">7のだん</option>
+        <option value="8">8のだん</option>
+        <option value="9">9のだん</option>
+        <option value="all">ぜんぶ (1〜9のだん)</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label style="margin-top: 5px;">せいかいしたあとのアニメーション</label>
+      <select id="anim-speed">
+        <option value="fast" selected>はやい</option>
+        <option value="slow">ゆっくり</option>
+        <option value="off">なし（⭕だけ出してすぐつぎへ）</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label><input type="checkbox" id="hint-toggle" checked> ヒント（おはじき）を出す</label>
+    </div>
+
+    <div class="setting-group">
+      <label><input type="checkbox" id="voice-toggle"> こえでこたえる（マイク）</label>
+      <div id="voice-note" style="font-size:14px;color:#666;">こたえを声でいうと、じどうで判定します。テンキーもつかえます。</div>
+    </div>
+
+    <button id="start-btn">スタート</button>
+  </div>
+
+  <!-- Game Screen -->
+  <div id="game-screen" class="screen">
+    <div class="header">
+      <button id="back-btn">もどる</button>
+      <div class="score">せいかい：<span id="score-val">0</span> / <span id="total-val">0</span></div>
+    </div>
+
+    <div class="question-area">
+      <div class="yomi-area">
+        <span id="yomi-left"></span>
+        <span id="yomi-right"></span>
+      </div>
+      <span id="numA"></span> × <span id="numB"></span> ＝ <span id="answer-input" class="blink">?</span>
+    </div>
+
+    <div class="voice-status" id="voice-status"></div>
+
+    <div class="hint-area" id="hint-area"></div>
+
+    <div class="tenkey-area">
+      <button class="key-btn" data-val="1">1</button>
+      <button class="key-btn" data-val="2">2</button>
+      <button class="key-btn" data-val="3">3</button>
+      <button class="key-btn" data-val="4">4</button>
+      <button class="key-btn" data-val="5">5</button>
+      <button class="key-btn" data-val="6">6</button>
+      <button class="key-btn" data-val="7">7</button>
+      <button class="key-btn" data-val="8">8</button>
+      <button class="key-btn" data-val="9">9</button>
+      <button class="key-btn clear" data-val="C">C</button>
+      <button class="key-btn" data-val="0">0</button>
+      <button class="key-btn ok" data-val="OK">OK</button>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <div id="overlay-icon"></div>
+  </div>
+
+  <script>
+    // 読み方の定義
+    const yomiLeft = {
+      1: {1: "いんいちが", 2: "いんにが", 3: "いんさんが", 4: "いんしが", 5: "いんごが", 6: "いんろくが", 7: "いんしちが", 8: "いんはちが", 9: "いんくが"},
+      2: {1: "にいちが", 2: "ににんが", 3: "にさんが", 4: "にしが", 5: "にご", 6: "にろく", 7: "にしち", 8: "にはち", 9: "にく"},
+      3: {1: "さんいちが", 2: "さんにが", 3: "さざんが", 4: "さんし", 5: "さんご", 6: "さぶろく", 7: "さんしち", 8: "さんぱ", 9: "さんく"},
+      4: {1: "しいちが", 2: "しにが", 3: "しさん", 4: "しし", 5: "しご", 6: "しろく", 7: "ししち", 8: "しは", 9: "しく"},
+      5: {1: "ごいちが", 2: "ごに", 3: "ごさん", 4: "ごし", 5: "ごご", 6: "ごろく", 7: "ごしち", 8: "ごは", 9: "ごく"},
+      6: {1: "ろくいちが", 2: "ろくに", 3: "ろくさん", 4: "ろくし", 5: "ろくご", 6: "ろくろく", 7: "ろくしち", 8: "ろくは", 9: "ろっく"},
+      7: {1: "しちいちが", 2: "しちに", 3: "しちさん", 4: "しちし", 5: "しちご", 6: "しちろく", 7: "しちしち", 8: "しちは", 9: "しちく"},
+      8: {1: "はちいちが", 2: "はちに", 3: "はちさん", 4: "はちし", 5: "はちご", 6: "はちろく", 7: "はちしち", 8: "はっぱ", 9: "はっく"},
+      9: {1: "くいちが", 2: "くに", 3: "くさん", 4: "くし", 5: "くご", 6: "くろく", 7: "くしち", 8: "くはち", 9: "くく"}
+    };
+
+    const yomiRight = {
+      1: "いち", 2: "に", 3: "さん", 4: "し", 5: "ご", 6: "ろく", 7: "しち", 8: "はち", 9: "く",
+      10: "じゅう", 12: "じゅうに", 14: "じゅうし", 15: "じゅうご", 16: "じゅうろく", 18: "じゅうはち",
+      20: "にじゅう", 21: "にじゅういち", 24: "にじゅうし", 25: "にじゅうご", 27: "にじゅうしち", 28: "にじゅうはち",
+      30: "さんじゅう", 32: "さんじゅうに", 35: "さんじゅうご", 36: "さんじゅうろく",
+      40: "しじゅう", 42: "しじゅうに", 45: "しじゅうご", 48: "しじゅうはち", 49: "しじゅうく",
+      54: "ごじゅうし", 56: "ごじゅうろく", 63: "ろくじゅうさん", 64: "ろくじゅうし", 72: "しちじゅうに", 81: "はちじゅういち"
+    };
+
+    // 色の定義
+    const colorMap = {
+      1: '#ff0000', // 赤
+      2: '#f89339', // オレンジ
+      3: '#fee800', // 黄色
+      4: '#34C759', // 緑
+      5: '#5AC8FA', // 水色
+      6: '#AF52DE', // 紫
+      8: '#e24e9f', // 鮮やかなピンク
+      9: '#8E8E93'  // グレー
+    };
+    const rainbowColors = ['#E5B3FF', '#AF52DE', '#5AC8FA', '#34C759', '#fee800', '#f89339', '#FF3B30'];
+
+    // 7の段用のグラデーション定義
+    const rainbowGradient = 'linear-gradient(to top, #FF3B30, #f89339, #fee800, #34C759, #5AC8FA, #AF52DE, #E5B3FF)';
+    const rainbowGradientHorizontal = 'linear-gradient(to right, #FF3B30, #f89339, #fee800, #34C759, #5AC8FA, #AF52DE, #E5B3FF)';
+
+    // 交換法則アニメーション用に答えペアのリストを生成
+    const answerPairs = {};
+    for (let a = 1; a <= 9; a++) {
+      for (let b = 1; b <= 9; b++) {
+        const ans = a * b;
+        if (!answerPairs[ans]) answerPairs[ans] = [];
+        answerPairs[ans].push([a, b]);
+      }
+    }
+
+    // 状態管理
+    let currentMode = 'random';
+    let showHint = true;
+    let animSpeed = 'fast';   // 'fast' | 'slow' | 'off'
+    let questionQueue = [];
+    let currentQuestionIndex = 0;
+    let currentA = 0;
+    let currentB = 0;
+    let currentInput = "";
+    let score = 0;
+    let isAnimating = false;
+    let hintForced = false;   // 正解後におはじきを強制表示中か
+    let sessionId = 0;        // ゲームごとのID（古い非同期処理を止めるため）
+
+    // DOM要素
+    const setupScreen = document.getElementById('setup-screen');
+    const gameScreen = document.getElementById('game-screen');
+    const inputDisplay = document.getElementById('answer-input');
+    const yomiLeftDisplay = document.getElementById('yomi-left');
+    const yomiRightDisplay = document.getElementById('yomi-right');
+    const hintArea = document.getElementById('hint-area');
+    const overlay = document.getElementById('overlay');
+    const overlayIcon = document.getElementById('overlay-icon');
+    const scoreVal = document.getElementById('score-val');
+    const totalVal = document.getElementById('total-val');
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // ===== 音声入力 =====
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const voiceStatus = document.getElementById('voice-status');
+    let voiceOn = false;
+    let recognizer = null;
+    let listening = false;
+
+    if (!SpeechRec) {
+      document.getElementById('voice-toggle').disabled = true;
+      document.getElementById('voice-note').textContent =
+        'このブラウザは音声入力に対応していません（Chrome / Safari をつかってください）。';
+    }
+
+    // 「12」「十二」「じゅうに」「にじゅうよん」などを数字にする
+    function parseSpokenNumber(raw) {
+      let s = String(raw).normalize('NFKC').replace(/[\s、。,.!！?？]/g, '');
+      s = s.replace(/(です|だよ|かな|でしょう|だと思う)$/, '');
+      const d = s.match(/\d+/);
+      if (d) return parseInt(d[0], 10);
+
+      const kd = {一:1, 二:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9};
+      if (/^[一二三四五六七八九十]+$/.test(s)) {
+        const idx = s.indexOf('十');
+        if (idx === -1) return s.length === 1 ? kd[s] : null;
+        const before = s.slice(0, idx), after = s.slice(idx + 1);
+        const tens = before === '' ? 1 : kd[before];
+        const ones = after === '' ? 0 : kd[after];
+        return (tens && ones !== undefined) ? tens * 10 + ones : null;
+      }
+
+      const one = '(いち|に|さん|よん|し|ご|ろく|なな|しち|はち|きゅう|く)';
+      const m = s.match(new RegExp('^(?:' + one + '?じゅう)?' + one + '?$'));
+      if (m && s !== '') {
+        const val = {いち:1, に:2, さん:3, よん:4, し:4, ご:5, ろく:6, なな:7, しち:7, はち:8, きゅう:9, く:9};
+        const hasJuu = s.includes('じゅう');
+        const tens = hasJuu ? (m[1] ? val[m[1]] : 1) : 0;
+        const ones = m[2] ? val[m[2]] : 0;
+        return tens * 10 + ones;
+      }
+      return null;
+    }
+
+    function startListening() {
+      if (!voiceOn || listening || isAnimating || !gameScreen.classList.contains('active')) return;
+      if (!recognizer) createRecognizer();
+      try { recognizer.start(); } catch (e) { /* すでに開始済み */ }
+    }
+
+    function stopListening() {
+      if (recognizer) { try { recognizer.abort(); } catch (e) {} }
+      listening = false;
+    }
+
+    function createRecognizer() {
+      recognizer = new SpeechRec();
+      recognizer.lang = 'ja-JP';
+      recognizer.interimResults = false;
+      recognizer.maxAlternatives = 5;
+      recognizer.continuous = false;
+
+      recognizer.onstart = () => {
+        listening = true;
+        voiceStatus.textContent = '🎤 こたえをいってね';
+      };
+      recognizer.onresult = (ev) => {
+        if (isAnimating) return;
+        const res = ev.results[ev.results.length - 1];
+        const ans = currentA * currentB;
+        let first = null, matched = null;
+        for (let i = 0; i < res.length; i++) {
+          const n = parseSpokenNumber(res[i].transcript);
+          if (n === null) continue;
+          if (first === null) first = n;
+          if (n === ans) { matched = n; break; } // 候補のどれかが正解ならそれを採用
+        }
+        const picked = matched !== null ? matched : first;
+        if (picked === null) return; // 数字として聞き取れなかった → そのまま聞きなおし
+        currentInput = String(picked);
+        updateInputDisplay();
+        checkAnswer();
+      };
+      recognizer.onerror = (ev) => {
+        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+          voiceOn = false;
+          voiceStatus.textContent = '⚠️ マイクがつかえません。テンキーでこたえてね';
+        }
+      };
+      recognizer.onend = () => {
+        listening = false;
+        if (voiceOn && !isAnimating && gameScreen.classList.contains('active')) {
+          setTimeout(startListening, 300);
+        }
+      };
+    }
+
+    // スタートボタン
+    document.getElementById('start-btn').addEventListener('click', () => {
+      sessionId++;
+      currentMode = document.querySelector('input[name="mode"]:checked').value;
+      showHint = document.getElementById('hint-toggle').checked;
+      animSpeed = document.getElementById('anim-speed').value;
+      voiceOn = !!SpeechRec && document.getElementById('voice-toggle').checked;
+      voiceStatus.style.display = voiceOn ? 'block' : 'none';
+      voiceStatus.textContent = voiceOn ? '🎤 じゅんびちゅう…' : '';
+      questionQueue = [];
+
+      if (currentMode === 'random') {
+        const count = parseInt(document.getElementById('random-count').value);
+        const allQs = [];
+        for (let a = 1; a <= 9; a++) {
+          for (let b = 1; b <= 9; b++) {
+            allQs.push([a, b]);
+          }
+        }
+        for (let i = allQs.length - 1; i > 0; i--) {
+          const r = Math.floor(Math.random() * (i + 1));
+          const tmp = allQs[i];
+          allQs[i] = allQs[r];
+          allQs[r] = tmp;
+        }
+        questionQueue = allQs.slice(0, count);
+      } else {
+        const target = document.getElementById('junban-select').value;
+        if (target === 'all') {
+          for (let a = 1; a <= 9; a++) {
+            for (let b = 1; b <= 9; b++) {
+              questionQueue.push([a, b]);
+            }
+          }
+        } else {
+          const dan = parseInt(target);
+          for (let b = 1; b <= 9; b++) {
+            questionQueue.push([dan, b]);
+          }
+        }
+      }
+
+      currentQuestionIndex = 0;
+      score = 0;
+      scoreVal.textContent = score;
+      totalVal.textContent = questionQueue.length;
+
+      setupScreen.classList.remove('active');
+      gameScreen.classList.add('active');
+
+      nextQuestion();
+    });
+
+    // もどるボタン
+    document.getElementById('back-btn').addEventListener('click', () => {
+      sessionId++; // 進行中の非同期処理を無効化
+      isAnimating = false;
+      hintForced = false;
+      overlay.style.display = 'none';
+      hintArea.style.opacity = '1';
+      gameScreen.classList.remove('active');
+      setupScreen.classList.add('active');
+      stopListening();
+    });
+
+    // 次の問題をセット
+    function nextQuestion() {
+      if (currentQuestionIndex >= questionQueue.length) {
+        const sid = sessionId;
+        isAnimating = true;
+        stopListening();
+        overlay.style.display = 'flex';
+        overlayIcon.textContent = '💮';
+        overlayIcon.className = 'anim-maru';
+        setTimeout(() => {
+          if (sid !== sessionId) return;
+          overlay.style.display = 'none';
+          gameScreen.classList.remove('active');
+          setupScreen.classList.add('active');
+          isAnimating = false;
+        }, 2000);
+        return;
+      }
+
+      currentInput = "";
+      updateInputDisplay();
+
+      const q = questionQueue[currentQuestionIndex];
+      currentA = q[0];
+      currentB = q[1];
+
+      document.getElementById('numA').textContent = currentA;
+      document.getElementById('numB').textContent = currentB;
+      yomiLeftDisplay.textContent = yomiLeft[currentA][currentB];
+      yomiRightDisplay.textContent = "";
+
+      hintForced = false;
+      hintArea.style.opacity = '1';
+      drawHint(currentA, currentB, false);
+      isAnimating = false;
+      startListening();
+    }
+
+    // ヒント（おはじき）の描画
+    function drawHint(a, b, forceShow = false) {
+      hintArea.innerHTML = '';
+      if (!showHint && !forceShow) return;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'hint-wrapper';
+
+      const grid = document.createElement('div');
+      grid.className = 'grid-container';
+      grid.style.gridTemplateColumns = `repeat(${b}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${a}, 1fr)`;
+
+      const colGap = 20;
+      const rowGap = 3;
+      // 括弧の余白(70px程度)を引いて計算
+      const maxWidth = hintArea.clientWidth - 70;
+      const maxHeight = hintArea.clientHeight - 70;
+
+      const sizeByWidth = b > 0 ? (maxWidth - (b - 1) * colGap) / b : 40;
+      const sizeByHeight = a > 0 ? (maxHeight - (a - 1) * rowGap) / a : 40;
+      const dotSize = Math.max(10, Math.min(sizeByWidth, sizeByHeight, 40));
+
+      for (let r = 0; r < a; r++) {
+        for (let c = 0; c < b; c++) {
+          const dot = document.createElement('div');
+          dot.className = 'dot';
+          dot.style.width = `${dotSize}px`;
+          dot.style.height = `${dotSize}px`;
+
+          if (a === 7) {
+            dot.style.backgroundColor = rainbowColors[r];
+          } else {
+            dot.style.backgroundColor = colorMap[a];
+          }
+          grid.appendChild(dot);
+        }
+      }
+
+      // 左側のカッコと数字
+      const bracketLeft = document.createElement('div');
+      bracketLeft.className = 'bracket-left';
+      const numLeft = document.createElement('div');
+      numLeft.className = 'num-left';
+      numLeft.textContent = a;
+
+      if (a === 7) {
+        numLeft.style.backgroundImage = rainbowGradient;
+        numLeft.style.backgroundClip = 'text';
+        numLeft.style.webkitBackgroundClip = 'text';
+        numLeft.style.color = 'transparent';
+        numLeft.style.textShadow = 'none';
+        bracketLeft.style.borderImageSource = rainbowGradient;
+        bracketLeft.style.borderImageSlice = 1;
+      } else {
+        numLeft.style.color = colorMap[a];
+        bracketLeft.style.borderColor = colorMap[a];
+      }
+
+      // 下側のカッコと数字
+      const bracketBottom = document.createElement('div');
+      bracketBottom.className = 'bracket-bottom';
+      const numBottom = document.createElement('div');
+      numBottom.className = 'num-bottom';
+      numBottom.textContent = b;
+
+      if (b === 7) {
+        numBottom.style.backgroundImage = rainbowGradientHorizontal;
+        numBottom.style.backgroundClip = 'text';
+        numBottom.style.webkitBackgroundClip = 'text';
+        numBottom.style.color = 'transparent';
+        numBottom.style.textShadow = 'none';
+        bracketBottom.style.borderImageSource = rainbowGradientHorizontal;
+        bracketBottom.style.borderImageSlice = 1;
+      } else {
+        numBottom.style.color = colorMap[b];
+        bracketBottom.style.borderColor = colorMap[b];
+      }
+
+      wrapper.appendChild(grid);
+      wrapper.appendChild(bracketLeft);
+      wrapper.appendChild(numLeft);
+      wrapper.appendChild(bracketBottom);
+      wrapper.appendChild(numBottom);
+
+      hintArea.appendChild(wrapper);
+    }
+
+    // テンキー入力処理
+    document.querySelectorAll('.key-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        if (isAnimating) return;
+        const val = e.currentTarget.getAttribute('data-val');
+
+        if (val === 'C') {
+          currentInput = "";
+          updateInputDisplay();
+        } else if (val === 'OK') {
+          checkAnswer();
+        } else {
+          if (currentInput.length < 2) {
+            currentInput += val;
+            updateInputDisplay();
+
+            // 自動判定: 入力文字数が答えの桁数に達したら判定
+            const ansStr = String(currentA * currentB);
+            if (currentInput.length === ansStr.length) {
+              isAnimating = true; // 連続入力を防ぐ
+              const sid = sessionId;
+              setTimeout(() => {
+                if (sid !== sessionId) return;
+                checkAnswer();
+              }, 100); // 画面に入力値が一瞬表示されるように少しだけ待つ
+            }
+          }
+        }
+      });
+    });
+
+    function updateInputDisplay() {
+      if (currentInput === "") {
+        inputDisplay.textContent = "?";
+        inputDisplay.classList.add('blink');
+      } else {
+        inputDisplay.textContent = currentInput;
+        inputDisplay.classList.remove('blink');
+      }
+    }
+
+    // 答え合わせとアニメーション
+    async function checkAnswer() {
+      if (currentInput === "") {
+        isAnimating = false;
+        return;
+      }
+
+      const sid = sessionId;
+      const alive = () => sid === sessionId;
+
+      const ans = currentA * currentB;
+      const isCorrect = parseInt(currentInput) === ans;
+
+      isAnimating = true;
+
+      overlay.style.display = 'flex';
+      overlayIcon.className = '';
+      // ⭕❌のアニメーションを確実に再生し直す
+      void overlayIcon.offsetWidth;
+
+      const timeTable = {
+        fast: { circle: 800, fadeOut: 200, fadeIn: 1000, next: 500 },
+        slow: { circle: 1500, fadeOut: 600, fadeIn: 2500, next: 1500 },
+        off:  { circle: 600, fadeOut: 0, fadeIn: 0, next: 0 }
+      };
+      const times = timeTable[animSpeed] || timeTable.fast;
+
+      if (isCorrect) {
+        overlayIcon.textContent = '⭕';
+        overlayIcon.classList.add('anim-maru');
+        score++;
+        scoreVal.textContent = score;
+
+        yomiRightDisplay.textContent = yomiRight[ans];
+
+        // アニメーションなし: おはじきの表示も交換法則の切り替えもせず、⭕のあとすぐ次へ
+        if (animSpeed === 'off') {
+          await sleep(times.circle);
+          if (!alive()) return;
+          overlay.style.display = 'none';
+          currentQuestionIndex++;
+          nextQuestion();
+          return;
+        }
+
+        hintForced = true;
+        drawHint(currentA, currentB, true);
+
+        await sleep(times.circle);
+        if (!alive()) return;
+        overlay.style.display = 'none';
+
+        const pairs = answerPairs[ans];
+        if (pairs && pairs.length > 1) {
+          const currentIndex = pairs.findIndex(p => p[0] === currentA && p[1] === currentB);
+
+          for (let i = 1; i < pairs.length; i++) {
+            const nextIndex = (currentIndex + i) % pairs.length;
+            const nextA = pairs[nextIndex][0];
+            const nextB = pairs[nextIndex][1];
+
+            hintArea.style.opacity = '0';
+            await sleep(times.fadeOut);
+            if (!alive()) return;
+
+            // アニメーションに合わせて式とふりがなも更新
+            document.getElementById('numA').textContent = nextA;
+            document.getElementById('numB').textContent = nextB;
+            yomiLeftDisplay.textContent = yomiLeft[nextA][nextB];
+
+            drawHint(nextA, nextB, true);
+            hintArea.style.opacity = '1';
+            await sleep(times.fadeIn);
+            if (!alive()) return;
+          }
+        } else {
+          await sleep(times.next);
+          if (!alive()) return;
+        }
+
+        currentQuestionIndex++;
+        nextQuestion();
+
+      } else {
+        overlayIcon.textContent = '❌';
+        overlayIcon.classList.add('anim-batsu');
+        setTimeout(() => {
+          if (!alive()) return;
+          overlay.style.display = 'none';
+          currentInput = "";
+          updateInputDisplay();
+          isAnimating = false;
+          startListening();
+        }, 1000);
+      }
+    }
+
+    // ウィンドウリサイズ時におはじきのサイズを再計算
+    window.addEventListener('resize', () => {
+      if (gameScreen.classList.contains('active')) {
+        drawHint(currentA, currentB, hintForced);
+      }
+    });
+
+  </script>
+</body>
+</html>
