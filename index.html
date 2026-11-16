@@ -484,6 +484,8 @@
     let score = 0;
     let isAnimating = false;
     let hintForced = false;   // 正解後におはじきを強制表示中か
+    let leftStreak = 0;       // 式の前半だけが聞こえた回数（同じ問題で）
+    let ignoreStreak = 0;     // 判定できなかった回数（同じ問題で）
     let sessionId = 0;        // ゲームごとのID（古い非同期処理を止めるため）
 
     // DOM要素
@@ -635,10 +637,18 @@
       });
       const expandLong = (c) => c.replace(/([ぁ-ん])ー/g, (m, ch) => ch + vowelOf(ch));
       combos = combos.flatMap(c => { const e = expandLong(c); return e === c ? [c] : [c, e]; });
+      // 同じ音の漢字に聞き違えられやすいもの。もとの文字も残したうえで、読みなおした候補を足す
+      //（「6時20時」の「時」は「し」、「午後」は「ご」か「ごご」、「死後」は「しご」）
+      const ALT = [[/時/g, 'し'], [/午後/g, 'ごご'], [/午後/g, 'ご'], [/死後/g, 'しご']];
+      combos = combos.flatMap(c => [c, ...ALT.filter(([re]) => re.test(c)).map(([re, to]) => c.replace(re, to))]);
+      combos = [...new Set(combos)].slice(0, 96);
       return [...new Set(combos.map(normalizeKana))];
     }
 
     function normalizeKana(s) {
+      // 答えの「じゅうし」(14・24)が「重視」「中止」に、「ちがく」が「地学」に化けやすい
+      s = s.replace(/重視|中止|中市|重市/g, 'じゅうし').replace(/地学/g, 'ちく');
+      s = s.replace(/^ここ/, 'ご').replace(/^(にんにん|みんみん)/, 'にに');   // 「ココイチ」=ごいち、「ニンニン」=ににん
       s = s.replace(/^[eE]/, 'いち');                              // 先頭の「E」は「いん」と聞こえたもの
       s = s.replace(/[cC]+/g, 'し');                              // 「C」は「シー」と聞こえたもの
       s = s.replace(/[〇一二三四五六七八九十]/g, c => kanjiKana[c]);
@@ -708,7 +718,7 @@
         const partialDigits = ans >= 10
           ? ['' + currentA + currentB + Math.floor(ans / 10), '' + currentA + currentB + (ans % 10)] : [];
 
-        let ok = false, shown = null, wrongShown = null, how = '';
+        let ok = false, shown = null, wrongShown = null, how = '', leftOnly = false;
         for (let i = 0; i < res.length; i++) {
           const t = res[i].transcript;
           // ① 数字・漢数字だけで返ってきた場合（「3721」「37 21」「七五三五」など）は数字の並びで比べる
@@ -718,7 +728,7 @@
             if (dc.some(d => d.endsWith(onlyDigits) && d.slice(0, d.length - onlyDigits.length) === '' + currentA + currentB)) { ok = true; shown = t; how = 'digits-lenient'; break; }
             // 「じゅう」の落ちは数字（アラビア数字）で返ってきた場合だけの現象なので、漢数字のときは使わない
             if (!/[一二三四五六七八九〇十]/.test(String(t).normalize('NFKC')) && dc.some(d => partialDigits.includes(d))) { ok = true; shown = t; how = 'digits-partial'; break; }
-            if (dc.some(d => leftDigits.includes(d))) continue;           // 式の途中だけ → 判定しない
+            if (dc.some(d => leftDigits.includes(d))) { leftOnly = true; continue; }   // 式の途中だけ → 判定しない
             // 式の数字から始まっている（答えだけちがう）か、答えだけ（1〜2けた）をいったときだけ✕にする
             if (wrongShown === null && dc.some(d => d.startsWith('' + currentA + currentB) || d.length <= 2)) wrongShown = t;
             continue;
@@ -738,8 +748,14 @@
           if (ks.some(k => k.length > left2.length && k.startsWith(left2) && !KANA_VOCAB.test(k.slice(left2.length)) && k.length - left2.length <= 6)) {
             ok = true; shown = t; how = 'kana-lenient-tail'; break;
           }
-          if (ks.some(k => leftParts.includes(k))) continue;                  // 式の途中だけ → 判定しない
+          if (ks.some(k => leftParts.includes(k))) { leftOnly = true; continue; }    // 式の途中だけ → 判定しない
           if (wrongShown === null && ks.some(k => KANA_VOCAB.test(k) && (k.startsWith(left2) || ANSWER_KANA.has(k) || CHANT_KANA.has(k)))) wrongShown = t;
+        }
+
+        // 式の前半だけが3回続いたら、認識が語尾を落としているだけと見て○にする（同じ問題で）
+        if (!ok && wrongShown === null && leftOnly) {
+          leftStreak++;
+          if (leftStreak >= 3) { ok = true; how = 'left-repeat'; shown = res[0].transcript; }
         }
 
         // 調整用ログ: 聞こえた候補ぜんぶと、判定結果
@@ -768,7 +784,10 @@
         }
         else {
           // 九九のことばに聞こえない / 式の途中だけ → 判定せず聞きなおし（聞こえた内容は画面に出さない）
-          voiceStatus.textContent = '🎤 もういちど いってね';
+          ignoreStreak++;
+          voiceStatus.textContent = ignoreStreak >= 3
+            ? '🎤 マイクのせいでうまくききとれないので ボタンでおしえてね'
+            : '🎤 もういちど いってね';
         }
       };
       recognizer.onerror = (ev) => {
@@ -884,6 +903,8 @@
       yomiRightDisplay.textContent = "";
 
       hintForced = false;
+      leftStreak = 0;
+      ignoreStreak = 0;
       hintArea.style.opacity = '1';
       drawHint(currentA, currentB, false);
       isAnimating = false;
