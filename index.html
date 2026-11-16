@@ -159,6 +159,16 @@
       padding: 6px 10px;
     }
 
+    .log-btn {
+      font-size: 16px;
+      padding: 8px 12px;
+      margin: 0 6px 6px 0;
+      border-radius: 8px;
+      border: 1px solid #bbb;
+      background: #fff;
+      cursor: pointer;
+    }
+
     /* Hint Area */
     .hint-area {
       flex: 1;
@@ -361,6 +371,15 @@
       <div id="voice-note" style="font-size:14px;color:#666;">「さんいちがさん」のように式からいっても、「さん」とこたえだけでもOK。じどうで判定します。テンキーもつかえます。</div>
     </div>
 
+    <div class="setting-group">
+      <label>📝 ききとりログ（<span id="log-count">0</span>件）</label>
+      <div style="font-size:14px;color:#666;margin-bottom:8px;">れんしゅう中に「なんと聞こえたか・正誤」をきろくします。うまくいかないところを直すための資料です（この端末の中だけに保存）。</div>
+      <button class="log-btn" id="log-dl">ダウンロード</button>
+      <button class="log-btn" id="log-copy">コピー</button>
+      <button class="log-btn" id="log-clear">ぜんぶけす</button>
+      <span id="log-msg" style="font-size:14px;color:#2e7d32;"></span>
+    </div>
+
     <button id="start-btn">スタート</button>
   </div>
 
@@ -481,6 +500,50 @@
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+    // ===== ききとりログ（調整用に、聞こえた内容と正誤をきろく） =====
+    const LOG_KEY = 'kukuVoiceLog';
+    const LOG_MAX = 1000;
+    let voiceLog = [];
+    try { voiceLog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) { voiceLog = []; }
+    const logCount = document.getElementById('log-count');
+    const logMsg = document.getElementById('log-msg');
+
+    function addLog(entry) {
+      voiceLog.push(Object.assign({ time: new Date().toISOString() }, entry));
+      if (voiceLog.length > LOG_MAX) voiceLog.splice(0, voiceLog.length - LOG_MAX);
+      try { localStorage.setItem(LOG_KEY, JSON.stringify(voiceLog)); } catch (e) {}
+      logCount.textContent = voiceLog.length;
+    }
+    function logText() {
+      return JSON.stringify({
+        app: 'kuku', exportedAt: new Date().toISOString(),
+        userAgent: navigator.userAgent, entries: voiceLog
+      }, null, 2);
+    }
+    function flashLogMsg(t) { logMsg.textContent = t; setTimeout(() => { logMsg.textContent = ''; }, 2500); }
+    logCount.textContent = voiceLog.length;
+
+    document.getElementById('log-dl').addEventListener('click', () => {
+      const blob = new Blob([logText()], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const st = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      a.href = url; a.download = 'kuku-log-' + st + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      flashLogMsg('ダウンロードしました');
+    });
+    document.getElementById('log-copy').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(logText()); flashLogMsg('コピーしました'); }
+      catch (e) { flashLogMsg('コピーできませんでした（ダウンロードをつかってね）'); }
+    });
+    document.getElementById('log-clear').addEventListener('click', () => {
+      if (!confirm('ログをぜんぶけしますか？')) return;
+      voiceLog = [];
+      try { localStorage.removeItem(LOG_KEY); } catch (e) {}
+      logCount.textContent = 0;
+    });
+
     // ===== 音声入力 =====
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     const voiceStatus = document.getElementById('voice-status');
@@ -548,7 +611,7 @@
               .replace(/よん/g, 'し')
               .replace(/なな/g, 'しち')
               .replace(/きゅう/g, 'く')
-              .replace(/は(?!ち)/g, 'はち');                      // 「しは」「ごは」→「しはち」「ごはち」
+              .replace(/(し|ご|ろく|しち)は(?!ち)/g, '$1はち');      // 「しは」「ごは」→「しはち」「ごはち」（九九の読みのときだけ）
     }
     const toKana = (raw) => kanaVariants(raw)[0];
 
@@ -586,29 +649,46 @@
         const onlyDigits = '' + ans;
         const leftDigits = ['' + currentA, '' + currentA + currentB];
 
-        let ok = false, shown = null, wrongShown = null;
+        let ok = false, shown = null, wrongShown = null, how = '';
         for (let i = 0; i < res.length; i++) {
           const t = res[i].transcript;
           // ① 数字だけで返ってきた場合（「3721」「37 21」「3×7=21」など）は数字の並びで比べる
           const d = digitsOnly(t);
           if (d !== null) {
-            if (d === fullDigits || d === onlyDigits) { ok = true; shown = t; break; }
-            if (d.endsWith(onlyDigits) && d.slice(0, d.length - onlyDigits.length) === '' + currentA + currentB) { ok = true; shown = t; break; }
+            if (d === fullDigits || d === onlyDigits) { ok = true; shown = t; how = 'digits-exact'; break; }
+            if (d.endsWith(onlyDigits) && d.slice(0, d.length - onlyDigits.length) === '' + currentA + currentB) { ok = true; shown = t; how = 'digits-lenient'; break; }
             if (wrongShown === null && !leftDigits.includes(d)) wrongShown = t;
             continue;
           }
           // ② かな・漢字まじりはひらがなに直して比べる（数字の読み方の候補ごと）
           const ks = kanaVariants(t);
-          if (ks.some(k => k === full || k === only)) { ok = true; shown = t; break; } // 候補のどれかが合っていれば正解
+          if (ks.some(k => k === full || k === only)) { ok = true; shown = t; how = 'kana-exact'; break; } // 候補のどれかが合っていれば正解
           // ゆるい判定: 最後の答えが合っていて、前半が聞き違い（「死後」など九九のことばでない文字）なら正解にする
           if (ks.some(k => {
             if (!k.endsWith(only)) return false;
             const pre = k.slice(0, k.length - only.length);
-            return pre === '' || pre === kanaNum(currentA) + kanaNum(currentB) || !KANA_VOCAB.test(pre);
-          })) { ok = true; shown = t; break; }
+            if (pre === '' || pre === kanaNum(currentA) + kanaNum(currentB)) return true;
+            // 前半に漢字が含まれる（「死後」など、しごの聞き違い）ときだけ許す。かなだけの雑音は許さない
+            return !KANA_VOCAB.test(pre) && /[一-龥々]/.test(pre) && pre.length <= 8;
+          })) { ok = true; shown = t; how = 'kana-lenient'; break; }
           if (ks.some(k => leftParts.includes(k))) continue;                           // 式の途中だけ → 判定しない
           if (wrongShown === null && ks.some(k => KANA_VOCAB.test(k))) wrongShown = t;
         }
+
+        // 調整用ログ: 聞こえた候補ぜんぶと、判定結果
+        addLog({
+          type: 'voice',
+          question: currentA + '×' + currentB,
+          expected: { kana: full, digits: fullDigits },
+          result: ok ? 'correct' : (wrongShown !== null ? 'wrong' : 'ignored'),
+          how: ok ? how : '',
+          heard: Array.from(res).map(r => ({
+            text: r.transcript,
+            confidence: Math.round(r.confidence * 100) / 100,
+            digits: digitsOnly(r.transcript),
+            kana: digitsOnly(r.transcript) === null ? kanaVariants(r.transcript) : null
+          }))
+        });
 
         if (ok) {
           voiceStatus.textContent = '👂「' + shown + '」';
@@ -627,6 +707,7 @@
         }
       };
       recognizer.onerror = (ev) => {
+        addLog({ type: 'error', question: currentA + '×' + currentB, error: ev.error });
         if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
           voiceOn = false;
           voiceStatus.textContent = '⚠️ マイクがつかえません。テンキーでこたえてね';
@@ -647,6 +728,7 @@
       showHint = document.getElementById('hint-toggle').checked;
       animSpeed = document.getElementById('anim-speed').value;
       voiceOn = !!SpeechRec && document.getElementById('voice-toggle').checked;
+      addLog({ type: 'start', mode: currentMode, voice: voiceOn, hint: showHint, anim: animSpeed });
       voiceStatus.style.display = voiceOn ? 'block' : 'none';
       voiceStatus.textContent = voiceOn ? '🎤 じゅんびちゅう…' : '';
       questionQueue = [];
@@ -884,6 +966,7 @@
 
       const ans = currentA * currentB;
       const isCorrect = forced !== undefined ? forced : parseInt(currentInput) === ans;
+      if (forced === undefined) addLog({ type: 'key', question: currentA + '×' + currentB, input: currentInput, result: isCorrect ? 'correct' : 'wrong' });
 
       isAnimating = true;
 
