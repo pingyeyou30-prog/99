@@ -506,6 +506,14 @@
       return (t > 1 ? kanaDigit[t] : '') + 'じゅう' + (o ? kanaDigit[o] : '');
     }
 
+    // 数字（と記号・空白）だけでできた認識結果なら、数字の並びを返す。かな・漢字が混じるなら null
+    function digitsOnly(raw) {
+      const s = String(raw).normalize('NFKC');
+      if (/[ぁ-んァ-ヶ一-龥]/.test(s)) return null;
+      const d = s.replace(/\D/g, '');
+      return d === '' ? null : d;
+    }
+
     // 認識結果（漢字・数字・かな・カタカナ混じり）を、比べやすいひらがなに統一する
     function toKana(raw) {
       let s = String(raw).normalize('NFKC');
@@ -562,10 +570,21 @@
         const full = kanaNum(currentA) + kanaNum(currentB) + kanaNum(ans); // 例: さんいちさん
         const only = kanaNum(ans);                                          // 答えだけでもOK
         const leftParts = [kanaNum(currentA), kanaNum(currentA) + kanaNum(currentB)];
+        const fullDigits = '' + currentA + currentB + ans;   // 例: 3721
+        const onlyDigits = '' + ans;
+        const leftDigits = ['' + currentA, '' + currentA + currentB];
 
         let ok = false, shown = null, wrongShown = null;
         for (let i = 0; i < res.length; i++) {
           const t = res[i].transcript;
+          // ① 数字だけで返ってきた場合（「3721」「37 21」「3×7=21」など）は数字の並びで比べる
+          const d = digitsOnly(t);
+          if (d !== null) {
+            if (d === fullDigits || d === onlyDigits) { ok = true; shown = t; break; }
+            if (wrongShown === null && !leftDigits.includes(d)) wrongShown = t;
+            continue;
+          }
+          // ② かな・漢字まじりはひらがなに直して比べる
           const k = toKana(t);
           if (k === full || k === only) { ok = true; shown = t; break; } // 候補のどれかが合っていれば正解
           if (wrongShown === null && KANA_VOCAB.test(k) && !leftParts.includes(k)) wrongShown = t;
