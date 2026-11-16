@@ -358,7 +358,7 @@
 
     <div class="setting-group">
       <label><input type="checkbox" id="voice-toggle"> こえでこたえる（マイク）</label>
-      <div id="voice-note" style="font-size:14px;color:#666;">こたえを声でいうと、じどうで判定します。テンキーもつかえます。</div>
+      <div id="voice-note" style="font-size:14px;color:#666;">「さんいちがさん」のように式からいっても、「さん」とこたえだけでもOK。じどうで判定します。テンキーもつかえます。</div>
     </div>
 
     <button id="start-btn">スタート</button>
@@ -494,33 +494,43 @@
         'このブラウザは音声入力に対応していません（Chrome / Safari をつかってください）。';
     }
 
-    // 「12」「十二」「じゅうに」「にじゅうよん」などを数字にする
-    function parseSpokenNumber(raw) {
-      let s = String(raw).normalize('NFKC').replace(/[\s、。,.!！?？]/g, '');
-      s = s.replace(/(です|だよ|かな|でしょう|だと思う)$/, '');
-      const d = s.match(/\d+/);
-      if (d) return parseInt(d[0], 10);
+    // ===== 聞き取った言葉をひらがなに直して、九九の唱えことばと比べる =====
+    const kanaDigit = {1:'いち', 2:'に', 3:'さん', 4:'し', 5:'ご', 6:'ろく', 7:'しち', 8:'はち', 9:'く'};
+    const kanjiKana = {'〇':'', '一':'いち', '二':'に', '三':'さん', '四':'し', '五':'ご', '六':'ろく', '七':'しち', '八':'はち', '九':'く', '十':'じゅう'};
+    const KANA_VOCAB = /^(?:いち|に|さん|し|ご|ろく|しち|はち|く|じゅう)+$/;
 
-      const kd = {一:1, 二:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9};
-      if (/^[一二三四五六七八九十]+$/.test(s)) {
-        const idx = s.indexOf('十');
-        if (idx === -1) return s.length === 1 ? kd[s] : null;
-        const before = s.slice(0, idx), after = s.slice(idx + 1);
-        const tens = before === '' ? 1 : kd[before];
-        const ones = after === '' ? 0 : kd[after];
-        return (tens && ones !== undefined) ? tens * 10 + ones : null;
-      }
+    // 1〜99 を九九での読み方（ひらがな）にする。例: 24 → にじゅうし
+    function kanaNum(n) {
+      if (n < 10) return kanaDigit[n] || '';
+      const t = Math.floor(n / 10), o = n % 10;
+      return (t > 1 ? kanaDigit[t] : '') + 'じゅう' + (o ? kanaDigit[o] : '');
+    }
 
-      const one = '(いち|に|さん|よん|し|ご|ろく|なな|しち|はち|きゅう|く)';
-      const m = s.match(new RegExp('^(?:' + one + '?じゅう)?' + one + '?$'));
-      if (m && s !== '') {
-        const val = {いち:1, に:2, さん:3, よん:4, し:4, ご:5, ろく:6, なな:7, しち:7, はち:8, きゅう:9, く:9};
-        const hasJuu = s.includes('じゅう');
-        const tens = hasJuu ? (m[1] ? val[m[1]] : 1) : 0;
-        const ones = m[2] ? val[m[2]] : 0;
-        return tens * 10 + ones;
-      }
-      return null;
+    // 認識結果（漢字・数字・かな・カタカナ混じり）を、比べやすいひらがなに統一する
+    function toKana(raw) {
+      let s = String(raw).normalize('NFKC');
+      s = s.replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)); // カタカナ→ひらがな
+      s = s.replace(/\d+/g, m => m.length <= 2
+        ? kanaNum(parseInt(m, 10))
+        : m.split('').map(d => kanaDigit[d] || '').join(''));
+      s = s.replace(/[〇一二三四五六七八九十]/g, c => kanjiKana[c]);
+      s = s.replace(/ゅー/g, 'ゅう');
+      s = s.replace(/[が\s×xX*=。、,.!！?？]/g, '');          // 「が」や記号・空白は無視
+      s = s.replace(/(です|だよ|かな|でしょう)$/, '');
+      // 九九の特別な読み方を、ふつうの読み方にそろえる
+      s = s.replace(/^いん/, 'いち')                          // いんいち・いんに…
+           .replace(/ににん/g, 'にに')
+           .replace(/さざん/g, 'さんさん')
+           .replace(/さぶろく/g, 'さんろく')
+           .replace(/さんぱ/g, 'さんはち')
+           .replace(/はっぱ/g, 'はちはち')
+           .replace(/はっく/g, 'はちく')
+           .replace(/ろっく/g, 'ろくく')
+           .replace(/よん/g, 'し')
+           .replace(/なな/g, 'しち')
+           .replace(/きゅう/g, 'く')
+           .replace(/は(?!ち)/g, 'はち');                      // 「しは」「ごは」→「しはち」「ごはち」
+      return s;
     }
 
     function startListening() {
@@ -549,18 +559,30 @@
         if (isAnimating) return;
         const res = ev.results[ev.results.length - 1];
         const ans = currentA * currentB;
-        let first = null, matched = null;
+        const full = kanaNum(currentA) + kanaNum(currentB) + kanaNum(ans); // 例: さんいちさん
+        const only = kanaNum(ans);                                          // 答えだけでもOK
+        const leftParts = [kanaNum(currentA), kanaNum(currentA) + kanaNum(currentB)];
+
+        let ok = false, shown = null, wrongShown = null;
         for (let i = 0; i < res.length; i++) {
-          const n = parseSpokenNumber(res[i].transcript);
-          if (n === null) continue;
-          if (first === null) first = n;
-          if (n === ans) { matched = n; break; } // 候補のどれかが正解ならそれを採用
+          const t = res[i].transcript;
+          const k = toKana(t);
+          if (k === full || k === only) { ok = true; shown = t; break; } // 候補のどれかが合っていれば正解
+          if (wrongShown === null && KANA_VOCAB.test(k) && !leftParts.includes(k)) wrongShown = t;
         }
-        const picked = matched !== null ? matched : first;
-        if (picked === null) return; // 数字として聞き取れなかった → そのまま聞きなおし
-        currentInput = String(picked);
-        updateInputDisplay();
-        checkAnswer();
+
+        if (ok) {
+          voiceStatus.textContent = '👂「' + shown + '」';
+          currentInput = String(ans);
+          updateInputDisplay();
+          checkAnswer(true);
+        } else if (wrongShown !== null) {
+          voiceStatus.textContent = '👂「' + wrongShown + '」';
+          currentInput = "";
+          updateInputDisplay();
+          checkAnswer(false);
+        }
+        // 九九のことばに聞こえない / 式の途中だけ → 何もせず聞きなおし
       };
       recognizer.onerror = (ev) => {
         if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
@@ -809,8 +831,8 @@
     }
 
     // 答え合わせとアニメーション
-    async function checkAnswer() {
-      if (currentInput === "") {
+    async function checkAnswer(forced) {
+      if (forced === undefined && currentInput === "") {
         isAnimating = false;
         return;
       }
@@ -819,7 +841,7 @@
       const alive = () => sid === sessionId;
 
       const ans = currentA * currentB;
-      const isCorrect = parseInt(currentInput) === ans;
+      const isCorrect = forced !== undefined ? forced : parseInt(currentInput) === ans;
 
       isAnimating = true;
 
