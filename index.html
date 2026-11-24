@@ -369,7 +369,7 @@
     <div class="setting-group">
       <label><input type="checkbox" id="hint-toggle" checked> ヒント（おはじき）を出す</label>
       <label><input type="checkbox" id="group-toggle"> おはじきを「まとまり」のわくでかこむ</label>
-      <div style="font-size:14px;color:#666;">おはじきを 5こ・10こ のまとまり（または おなじかずずつ）の四角でかこみます。のこりはかこみません（わけかたは もんだいごとにランダム）。</div>
+      <div style="font-size:14px;color:#666;">おはじきを 10こ のまとまり（または おなじかずずつ）でかこみます。四角が基本で、むりなときだけ角のすくない形になります。のこりはかこみません（わけかたは もんだいごとにランダム）。</div>
     </div>
 
     <div class="setting-group">
@@ -922,19 +922,161 @@
     }
 
     // ===== まとまりのわく =====
-    // おはじきを「長方形」のまとまりでかこむ（階段やL字の形にはしない）。かこまないあまりは、そのまま。
-    //  ① 同じ数ずつ:  8×2=16 → 2×2のまとまり4つ / 4×5=20 → 2行×5列のまとまり2つ
-    //  ② 10・5のまとまり+あまり:  7×7=49 → 横長10(2行×5列)を3つ + たて長10(5行×2列)を1つ + あまり9
-    // まとまりは {r, c, h, w} = 上から r行め・左から c列めから、たて h こ × よこ w こ
+    // おはじきを、長方形（基本）か、どうしても無理なときだけ角の少ないL字でかこむ。かこまないあまりは、そのまま。
+    //  ① 同じ数ずつ:        8×2=16 → 2×2のまとまり4つ / 4×5=20 → 2行×5列のまとまり2つ
+    //  ② 10このまとまり+あまり: 7×7=49 → 10こ×4 + あまり9 / 8×9=72 → 10こ×7 + あまり2（1つだけL字）
+    //  ③ 10こが入らない小さな問題だけ、5この長方形（1×5 / 5×1）
+    // まとまりは、おはじきの位置 [行, 列] のならび
+    const rectCells = (r, c, h, w) => {
+      const out = [];
+      for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) out.push([r + i, c + j]);
+      return out;
+    };
+    const isRectCells = (cells) => {
+      const rs = cells.map(x => x[0]), cs = cells.map(x => x[1]);
+      return (Math.max(...rs) - Math.min(...rs) + 1) * (Math.max(...cs) - Math.min(...cs) + 1) === cells.length;
+    };
+
+    // 10このL字: 長方形のすみを、2こ以内だけ欠いた形（角が6つ）。例: 3,3,3,1 / 4,4,2
+    const TEN_L_SHAPES = (() => {
+      const out = [], seen = new Set();
+      for (let H = 2; H <= 7; H++) for (let W = 2; W <= 7; W++) for (let p = 1; p < H; p++) for (let q = 1; q < W; q++) {
+        if (H * W - p * q !== 10 || p * q > 2) continue;
+        for (const [pr, pc] of [[0, 0], [0, W - q], [H - p, 0], [H - p, W - q]]) {
+          const cells = [];
+          for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+            if (!(r >= pr && r < pr + p && c >= pc && c < pc + q)) cells.push([r, c]);
+          }
+          const k = JSON.stringify(cells);
+          if (!seen.has(k)) { seen.add(k); out.push(cells); }
+        }
+      }
+      return out;
+    })();
+
+    // 10このまとまりだけで、あまり9こ以内・あまりがひとかたまりになるように、左上から順にしきつめる。
+    // L字は maxL こまで（長方形をさきに試す）
+    function solveTens(a, b, maxL, wideFirst) {
+      const rects = wideFirst ? [rectCells(0, 0, 2, 5), rectCells(0, 0, 5, 2)] : [rectCells(0, 0, 5, 2), rectCells(0, 0, 2, 5)];
+      const shapes = [...rects.map(cells => ({ cells, isRect: true })), ...TEN_L_SHAPES.map(cells => ({ cells, isRect: false }))];
+      const grid = Array.from({ length: a }, () => Array(b).fill(0));   // 0:あき / 1:まとまり / -1:あまり
+      const placed = [];
+      let nodes = 0, found = null;
+      const leftoverConnected = () => {
+        const cells = [];
+        for (let i = 0; i < a; i++) for (let j = 0; j < b; j++) if (grid[i][j] === -1) cells.push([i, j]);
+        if (!cells.length) return true;
+        const keys = new Set(cells.map(x => x.join(',')));
+        const seen = new Set([cells[0].join(',')]);
+        const st = [cells[0]];
+        while (st.length) {
+          const [i, j] = st.pop();
+          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const k = (i + di) + ',' + (j + dj);
+            if (keys.has(k) && !seen.has(k)) { seen.add(k); st.push([i + di, j + dj]); }
+          }
+        }
+        return seen.size === cells.length;
+      };
+      const rec = (idx, leftover, lCount) => {
+        if (++nodes > 200000) return false;
+        while (idx < a * b && grid[Math.floor(idx / b)][idx % b]) idx++;
+        if (idx >= a * b) {
+          if (!leftoverConnected()) return false;
+          found = placed.map(cs => cs.map(x => x.slice()));
+          return true;
+        }
+        const r = Math.floor(idx / b), c = idx % b;
+        if (placed.length < 8) {                                   // わくは8こまで
+          for (const sh of shapes) {
+            if (!sh.isRect && lCount >= maxL) continue;
+            const [fr, fc] = sh.cells[0];                          // 先頭（いちばん上の左）をここに合わせる
+            const pos = [];
+            let ok = true;
+            for (const [dr, dc] of sh.cells) {
+              const rr = r + dr - fr, cc = c + dc - fc;
+              if (rr < 0 || rr >= a || cc < 0 || cc >= b || grid[rr][cc]) { ok = false; break; }
+              pos.push([rr, cc]);
+            }
+            if (!ok) continue;
+            pos.forEach(([rr, cc]) => { grid[rr][cc] = 1; });
+            placed.push(pos);
+            if (rec(idx + 1, leftover, lCount + (sh.isRect ? 0 : 1))) return true;
+            placed.pop();
+            pos.forEach(([rr, cc]) => { grid[rr][cc] = 0; });
+          }
+        }
+        if (leftover < 9) {                                        // あまりは9こまで
+          grid[r][c] = -1;
+          if (rec(idx + 1, leftover + 1, lCount)) return true;
+          grid[r][c] = 0;
+        }
+        return false;
+      };
+      rec(0, 0, 0);
+      return found;
+    }
+
+    // 10こずつの区切りかた（長方形だけで足りるならそれ。無理なときだけL字を1こ、2こと増やす）。問題の大きさごとに1回だけ計算
+    const tenCache = {};
+    function tenSolutions(a, b) {
+      const key = a + 'x' + b;
+      if (tenCache[key]) return tenCache[key];
+      const sols = [];
+      let minL = 99;
+      for (const wide of [true, false]) {
+        for (let L = 0; L <= 2; L++) {
+          const g = solveTens(a, b, L, wide);
+          if (!g) continue;
+          const nl = g.filter(cs => !isRectCells(cs)).length;
+          sols.push({ groups: g, nl });
+          minL = Math.min(minL, nl);
+          break;
+        }
+      }
+      const uniq = new Map();
+      sols.filter(x => x.nl === minL).forEach(x => uniq.set(JSON.stringify(x.groups), x));
+      tenCache[key] = [...uniq.values()];
+      return tenCache[key];
+    }
+
+    // ===== きまった「きれいな」わくの組みあわせ =====
+    // 回転しても同じ形になる（対称な）パズルのような並べかた。ここにある問題は、いつもこの形でかこむ。
+    // 文字ごとに10このまとまり、「.」はかこまないあまり。たて×よこ（行×列）の形。たて・よこを入れかえた問題は、この形を倒して使う。
+    const FIXED_LAYOUTS = {
+      // 7行×3列: 10このL字（3,3,3,1）が2つ。まん中の1こが、あまり
+      '7x3': ['aaa', 'aaa', 'aaa', 'a.b', 'bbb', 'bbb', 'bbb'],
+      // 風車: 2×5の四角が4つ、まん中に3×3のあまり
+      '7x7': ['AAAAABB', 'AAAAABB', 'DD...BB', 'DD...BB', 'DD...BB', 'DDCCCCC', 'DDCCCCC'],
+      // 風車: 四角が8つ、まん中の1こがあまり
+      '9x9': ['AAAAAEEBB', 'AAAAAEEBB', 'HHHHHEEBB', 'HHHHHEEBB', 'DDGG.EEBB', 'DDGGFFFFF', 'DDGGFFFFF', 'DDGGCCCCC', 'DDGGCCCCC'],
+      // はしご: たて長の四角が両はし、よこ長の四角が上下、まん中の1列があまり
+      '5x9': ['AACCCCCBB', 'AACCCCCBB', 'AA.....BB', 'AADDDDDBB', 'AADDDDDBB'],
+      // 四角が6つ、まん中のたて3こがあまり
+      '7x9': ['AAAAACCEE', 'AAAAACCEE', 'FFDD.CCEE', 'FFDD.CCEE', 'FFDD.CCEE', 'FFDDBBBBB', 'FFDDBBBBB'],
+    };
+    function fixedPlan(a, b) {
+      let rows = FIXED_LAYOUTS[a + 'x' + b], flip = false;
+      if (!rows && FIXED_LAYOUTS[b + 'x' + a]) { rows = FIXED_LAYOUTS[b + 'x' + a]; flip = true; }
+      if (!rows) return null;
+      const groups = {};
+      rows.forEach((line, r) => [...line].forEach((ch, c) => {
+        if (ch === '.') return;
+        (groups[ch] = groups[ch] || []).push(flip ? [c, r] : [r, c]);     // 倒すときは 行と列を入れかえる
+      }));
+      return { groups: Object.values(groups) };
+    }
+
     function planGroups(a, b) {
       const N = a * b;
       if (N < 6) return null;              // 5こ以下は、かこまない
       const key = a + 'x' + b;
       if (groupCache[key] !== undefined) return groupCache[key];
+      const fixed = fixedPlan(a, b);       // きまった形がある問題は、いつもその形
+      if (fixed) { groupCache[key] = fixed; return fixed; }
 
-      const equalPlans = [], blockPlans = [];
-
-      // ① 同じ数ずつ（4〜10こずつ）。たて・よこにきっちり並べられるものだけ
+      // ① 同じ数ずつ（4〜10こずつ）。たて・よこにきっちり並べられる長方形だけ
+      const equalPlans = [];
       for (let g = 4; g <= 10; g++) {
         if (N % g !== 0 || N / g < 2 || N / g > 10) continue;
         for (let h = 1; h <= g; h++) {
@@ -942,51 +1084,27 @@
           const w = g / h;
           if (a % h !== 0 || b % w !== 0) continue;
           if ((h === 1 && w === b) || (w === 1 && h === a)) continue;   // 1行ずつ・1列ずつは、もともとの並びと同じなので使わない
-          const rects = [];
-          for (let r = 0; r < a; r += h) for (let c = 0; c < b; c += w) rects.push({ r, c, h, w });
-          equalPlans.push({ rects, equal: true });
+          const groups = [];
+          for (let r = 0; r < a; r += h) for (let c = 0; c < b; c += w) groups.push(rectCells(r, c, h, w));
+          equalPlans.push({ groups });
         }
       }
 
-      // ② 10こ（2×5 / 5×2）と 5こ（1×5 / 5×1）の長方形を、左上から順にしきつめる。あまりは9こまで（大きい問題は14こまで）
-      const restMax = N >= 49 ? 14 : 9;
-      const TENS = [[2, 5], [5, 2]], FIVES = [[1, 5], [5, 1]];
-      const pack = (shapeOrder) => {
-        const used = Array.from({ length: a }, () => Array(b).fill(false));
-        const rects = [];
-        for (const [h, w] of shapeOrder) {
-          for (let r = 0; r + h <= a; r++) {
-            for (let c = 0; c + w <= b; c++) {
-              let free = true;
-              for (let i = r; i < r + h && free; i++) for (let j = c; j < c + w; j++) if (used[i][j]) { free = false; break; }
-              if (!free) continue;
-              for (let i = r; i < r + h; i++) for (let j = c; j < c + w; j++) used[i][j] = true;
-              rects.push({ r, c, h, w });
-            }
-          }
+      // ② 10こずつ + あまり（10こが入るとき）／ ③ 5この長方形（10こが入らない小さな問題だけ）
+      const blockPlans = [];
+      if (N >= 10) {
+        const sols = tenSolutions(a, b);
+        if (sols.length) {
+          const sol = sols[Math.floor(Math.random() * sols.length)];
+          const fh = Math.random() < 0.5, fv = Math.random() < 0.5;            // あまりの位置がかたよらないよう、ひっくり返す
+          const groups = sol.groups.map(cs => cs.map(([r, c]) => [fv ? a - 1 - r : r, fh ? b - 1 - c : c]));
+          if (!(groups.length === 1 && groups[0].length === N)) blockPlans.push({ groups });   // 全体を1つでかこむだけなら使わない
         }
-        return rects;
-      };
-      const seenSig = new Set();
-      const addBlock = (shapeOrder, needTen, needFive, minBoxes) => {
-        const rects = pack(shapeOrder);
-        const area = rects.reduce((n, x) => n + x.h * x.w, 0);
-        const hasTen = rects.some(x => x.h * x.w === 10), hasFive = rects.some(x => x.h * x.w === 5);
-        if (rects.length < minBoxes || rects.length > 8 || N - area > restMax) return;   // わくが多すぎるとかえって見にくい
-        if (rects.every(x => (x.h === 1 && x.w === b) || (x.w === 1 && x.h === a))) return;   // 1行ずつ・1列ずつだけ → もとの並びと同じなので使わない
-        if ((needTen && !hasTen) || (needFive && !hasFive)) return;
-        const sig = JSON.stringify(rects);
-        if (seenSig.has(sig)) return;
-        seenSig.add(sig);
-        blockPlans.push({ rects, equal: false });
-      };
-      for (const [t1, t2] of [[TENS[0], TENS[1]], [TENS[1], TENS[0]]]) {
-        addBlock([t1, t2], true, false, 1);                                        // 10こだけ（あまりをそのまま）
-        addBlock([t1, t2, FIVES[0], FIVES[1]], true, true, 2);                     // 10こ + 5こ
-        addBlock([t1, t2, FIVES[1], FIVES[0]], true, true, 2);
+      } else if ((a === 1 && b >= 6) || (b === 1 && a >= 6)) {
+        const n = Math.max(a, b), start = Math.random() < 0.5 ? 0 : n - 5;
+        const cells = Array.from({ length: 5 }, (_, i) => (a === 1 ? [0, start + i] : [start + i, 0]));
+        blockPlans.push({ groups: [cells] });
       }
-      addBlock([FIVES[0], FIVES[1]], false, false, 2);                             // 5こずつだけ
-      addBlock([FIVES[1], FIVES[0]], false, false, 2);
 
       // 「同じ数ずつ」と「10・5のまとまり+あまり」を半々で出す
       let pool = Math.random() < 0.5 ? equalPlans : blockPlans;
@@ -996,7 +1114,7 @@
       return pick;
     }
 
-    // まとまりのわく（おはじきの下にしく線）
+    // まとまりのわく（おはじきの下にしく線）。まとまりの外がわをたどって、角を丸くした線でかこむ
     function buildFrameSvg(plan, a, b, d, cg, rg, pad) {
       const NS = 'http://www.w3.org/2000/svg';
       const W = b * d + (b - 1) * cg, H = a * d + (a - 1) * rg;
@@ -1007,17 +1125,54 @@
       svg.style.left = `${-pad}px`;
       svg.style.top = `${-pad}px`;
       const inset = 2.5;   // となりのわくとくっつかないよう、すきまの中に少しひっこめる
-      for (const { r, c, h, w } of plan.rects) {
-        const rect = document.createElementNS(NS, 'rect');
-        rect.setAttribute('x', pad + c * (d + cg) - cg / 2 + inset);
-        rect.setAttribute('y', pad + r * (d + rg) - rg / 2 + inset);
-        rect.setAttribute('width', w * (d + cg) - inset * 2);
-        rect.setAttribute('height', h * (d + rg) - inset * 2);
-        rect.setAttribute('rx', 6);
-        rect.setAttribute('fill', 'none');
-        rect.setAttribute('stroke', '#444');
-        rect.setAttribute('stroke-width', '2');
-        svg.appendChild(rect);
+      const radius = 6;    // 角の丸み
+      for (const cells of plan.groups) {
+        const has = (r, c) => cells.some(x => x[0] === r && x[1] === c);
+        // 外がわの辺（内がわが右手になる向き）を、始点→終点でためる
+        const next = new Map();
+        for (const [r, c] of cells) {
+          if (!has(r - 1, c)) next.set(r + ',' + c, [r, c + 1]);            // 上: 左→右
+          if (!has(r, c + 1)) next.set(r + ',' + (c + 1), [r + 1, c + 1]);  // 右: 上→下
+          if (!has(r + 1, c)) next.set((r + 1) + ',' + (c + 1), [r + 1, c]);// 下: 右→左
+          if (!has(r, c - 1)) next.set((r + 1) + ',' + c, [r, c]);          // 左: 下→上
+        }
+        const startKey = next.keys().next().value;
+        const loop = [];
+        let cur = startKey.split(',').map(Number);
+        do {
+          loop.push(cur);
+          cur = next.get(cur[0] + ',' + cur[1]);
+        } while (cur && (cur[0] + ',' + cur[1]) !== startKey && loop.length < 400);
+        // 角（向きが変わる点）だけをとり、内がわに少しずらす
+        const pts = [];
+        loop.forEach((v, i) => {
+          const pv = loop[(i + loop.length - 1) % loop.length], nx = loop[(i + 1) % loop.length];
+          const d1 = [v[0] - pv[0], v[1] - pv[1]], d2 = [nx[0] - v[0], nx[1] - v[1]];
+          if (d1[0] === d2[0] && d1[1] === d2[1]) return;                  // まっすぐの途中
+          const [i0, j0] = v;
+          const q = [has(i0 - 1, j0 - 1), has(i0 - 1, j0), has(i0, j0 - 1), has(i0, j0)];   // 左上・右上・左下・右下
+          const k = q.filter(Boolean).length;
+          let sx = 0, sy = 0;
+          if (k === 1) { const m = q.indexOf(true); sx = (m % 2 === 1) ? 1 : -1; sy = (m >= 2) ? 1 : -1; }    // 出っぱった角: 角のあるほうへ
+          else { const m = q.indexOf(false); sx = (m % 2 === 1) ? -1 : 1; sy = (m >= 2) ? -1 : 1; }          // へこんだ角: 欠けと反対へ
+          pts.push([pad + j0 * (d + cg) - cg / 2 + sx * inset, pad + i0 * (d + rg) - rg / 2 + sy * inset]);
+        });
+        // 角を丸めた線にする
+        const unit = (p, q) => { const L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1; return [(q[0] - p[0]) / L, (q[1] - p[1]) / L, L]; };
+        let dstr = '';
+        pts.forEach((pt, i) => {
+          const pv = pts[(i + pts.length - 1) % pts.length], nx = pts[(i + 1) % pts.length];
+          const u1 = unit(pv, pt), u2 = unit(pt, nx);
+          const rr = Math.min(radius, u1[2] / 2, u2[2] / 2);
+          const A = [pt[0] - u1[0] * rr, pt[1] - u1[1] * rr], B = [pt[0] + u2[0] * rr, pt[1] + u2[1] * rr];
+          dstr += `${i === 0 ? 'M' : 'L'}${A[0]} ${A[1]}Q${pt[0]} ${pt[1]} ${B[0]} ${B[1]}`;
+        });
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('d', dstr + 'Z');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', '#444');
+        path.setAttribute('stroke-width', '2');
+        svg.appendChild(path);
       }
       return svg;
     }
