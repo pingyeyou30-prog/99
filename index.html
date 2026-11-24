@@ -231,6 +231,21 @@
       justify-content: center;
       align-content: center;
     }
+    /* まとまりのわく */
+    .group-wrap {
+      display: flex;
+      justify-content: center;
+    }
+    .group-box {
+      display: grid;
+      column-gap: 20px;
+      row-gap: 3px;
+      justify-content: center;
+      align-content: center;
+      padding: 4px;
+      border: 2px solid #555;
+      border-radius: 8px;
+    }
     .dot {
       border-radius: 50%;
       background-color: #ccc;
@@ -364,6 +379,8 @@
 
     <div class="setting-group">
       <label><input type="checkbox" id="hint-toggle" checked> ヒント（おはじき）を出す</label>
+      <label><input type="checkbox" id="group-toggle"> おはじきを「まとまり」のわくでかこむ</label>
+      <div style="font-size:14px;color:#666;">おはじきをいくつかのまとまりにわけて、わくでかこみます（わけかたは もんだいごとにランダム）。</div>
     </div>
 
     <div class="setting-group">
@@ -475,6 +492,8 @@
     // 状態管理
     let currentMode = 'random';
     let showHint = true;
+    let showGroups = false;   // おはじきをまとまりのわくでかこむ
+    let groupCache = {};      // もんだいごとの、わくの区切りかた（描きなおしでも変わらないように）
     let animSpeed = 'fast';   // 'fast' | 'slow' | 'off'
     let questionQueue = [];
     let currentQuestionIndex = 0;
@@ -810,9 +829,10 @@
       sessionId++;
       currentMode = document.querySelector('input[name="mode"]:checked').value;
       showHint = document.getElementById('hint-toggle').checked;
+      showGroups = document.getElementById('group-toggle').checked;
       animSpeed = document.getElementById('anim-speed').value;
       voiceOn = !!SpeechRec && document.getElementById('voice-toggle').checked;
-      addLog({ type: 'start', mode: currentMode, voice: voiceOn, hint: showHint, anim: animSpeed });
+      addLog({ type: 'start', mode: currentMode, voice: voiceOn, hint: showHint, groups: showGroups, anim: animSpeed });
       voiceStatus.style.display = voiceOn ? 'block' : 'none';
       voiceStatus.textContent = voiceOn ? '🎤 じゅんびちゅう…' : '';
       questionQueue = [];
@@ -905,10 +925,47 @@
       hintForced = false;
       leftStreak = 0;
       ignoreStreak = 0;
+      groupCache = {};
       hintArea.style.opacity = '1';
       drawHint(currentA, currentB, false);
       isAnimating = false;
       startListening();
+    }
+
+    // まとまりの区切りかたをランダムに決める（例: 8 → [2,2,2,2] / [4,4] / [5,3] / [3,2,3] ...）
+    function getGroupSizes(a, b) {
+      const n = Math.max(a, b);
+      if (n < 4) return null;                       // 少ないときは区切らない
+      const key = a + 'x' + b;
+      if (groupCache[key]) return groupCache[key];
+
+      const cands = [];
+      // 同じ数ずつ（2〜5こずつ。ちょうど割り切れるとき）
+      for (let g = 2; g <= 5; g++) if (n % g === 0 && n / g >= 2) cands.push(Array(n / g).fill(g));
+      // 5こずつ + のこり（例: 8 → 5,3）。向きを入れかえた形も
+      if (n > 5) {
+        const t = [];
+        for (let r = n; r > 0; r -= 5) t.push(Math.min(5, r));
+        if (!t.includes(1)) { cands.push(t); cands.push([...t].reverse()); }
+      }
+      // ばらばらの区切り（2〜5このまとまり）
+      for (let k = 0; k < 3; k++) {
+        const out = [];
+        let r = n;
+        while (r > 0) {
+          if (r <= 3) { out.push(r); break; }
+          let sz = Math.min(2 + Math.floor(Math.random() * 4), r);
+          if (r - sz === 1) sz = sz === 5 ? 4 : sz + 1;      // 1こだけ余らないように
+          out.push(sz);
+          r -= sz;
+        }
+        cands.push(out);
+      }
+      let valid = cands.filter(g => g.length >= 2 && !g.includes(1));
+      if (valid.length === 0) valid = [[Math.ceil(n / 2), Math.floor(n / 2)]];
+      const pick = valid[Math.floor(Math.random() * valid.length)];
+      groupCache[key] = pick;
+      return pick;
     }
 
     // ヒント（おはじき）の描画
@@ -919,35 +976,63 @@
       const wrapper = document.createElement('div');
       wrapper.className = 'hint-wrapper';
 
-      const grid = document.createElement('div');
-      grid.className = 'grid-container';
-      grid.style.gridTemplateColumns = `repeat(${b}, 1fr)`;
-      grid.style.gridTemplateRows = `repeat(${a}, 1fr)`;
-
       const colGap = 20;
       const rowGap = 3;
       // 括弧の余白(70px程度)を引いて計算
       const maxWidth = hintArea.clientWidth - 70;
       const maxHeight = hintArea.clientHeight - 70;
 
-      const sizeByWidth = b > 0 ? (maxWidth - (b - 1) * colGap) / b : 40;
-      const sizeByHeight = a > 0 ? (maxHeight - (a - 1) * rowGap) / a : 40;
+      // まとまりのわく: 多いほうの向きに、いくつかのまとまりに区切って並べる
+      const sizes = showGroups ? getGroupSizes(a, b) : null;   // null = わくなし
+      const byRows = a >= b;                                    // true: 上から下へ区切る / false: 左から右へ区切る
+      const boxesV = sizes && byRows ? sizes.length : 1;
+      const boxesH = sizes && !byRows ? sizes.length : 1;
+      const inset = sizes ? 6 : 0;                              // わくの線(2px)+内側の余白(4px)
+      const boxGap = sizes ? 8 : 0;                             // わくとわくのすきま
+      const fixedH = (a - boxesV) * rowGap + boxesV * 2 * inset + (boxesV - 1) * boxGap;
+      const fixedW = (b - boxesH) * colGap + boxesH * 2 * inset + (boxesH - 1) * boxGap;
+
+      const sizeByWidth = b > 0 ? (maxWidth - fixedW) / b : 40;
+      const sizeByHeight = a > 0 ? (maxHeight - fixedH) / a : 40;
       const dotSize = Math.max(10, Math.min(sizeByWidth, sizeByHeight, 40));
 
-      for (let r = 0; r < a; r++) {
-        for (let c = 0; c < b; c++) {
-          const dot = document.createElement('div');
-          dot.className = 'dot';
-          dot.style.width = `${dotSize}px`;
-          dot.style.height = `${dotSize}px`;
+      const makeDot = (r) => {
+        const dot = document.createElement('div');
+        dot.className = 'dot';
+        dot.style.width = `${dotSize}px`;
+        dot.style.height = `${dotSize}px`;
+        dot.style.backgroundColor = a === 7 ? rainbowColors[r] : colorMap[a];
+        return dot;
+      };
 
-          if (a === 7) {
-            dot.style.backgroundColor = rainbowColors[r];
-          } else {
-            dot.style.backgroundColor = colorMap[a];
-          }
-          grid.appendChild(dot);
+      let grid;
+      if (!sizes) {
+        grid = document.createElement('div');
+        grid.className = 'grid-container';
+        grid.style.gridTemplateColumns = `repeat(${b}, 1fr)`;
+        grid.style.gridTemplateRows = `repeat(${a}, 1fr)`;
+        for (let r = 0; r < a; r++) {
+          for (let c = 0; c < b; c++) grid.appendChild(makeDot(r));
         }
+      } else {
+        grid = document.createElement('div');
+        grid.className = 'group-wrap';
+        grid.style.flexDirection = byRows ? 'column' : 'row';
+        grid.style.gap = `${boxGap}px`;
+        let start = 0;
+        sizes.forEach(sz => {
+          const box = document.createElement('div');
+          box.className = 'group-box';
+          const rows = byRows ? sz : a;
+          const cols = byRows ? b : sz;
+          box.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+          box.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) box.appendChild(makeDot(byRows ? start + r : r));
+          }
+          grid.appendChild(box);
+          start += sz;
+        });
       }
 
       // 左側のカッコと数字
