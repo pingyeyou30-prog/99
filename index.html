@@ -231,21 +231,10 @@
       justify-content: center;
       align-content: center;
     }
-    /* まとまりのわく */
-    .group-wrap {
-      display: flex;
-      justify-content: center;
-    }
-    .group-box {
-      display: grid;
-      column-gap: 20px;
-      row-gap: 3px;
-      justify-content: center;
-      align-content: center;
-      padding: 4px;
-      border: 2px solid #555;
-      border-radius: 8px;
-    }
+    /* まとまりのわく（おはじきの個数で、5や10などのまとまりをかこむ） */
+    .grid-container { position: relative; }
+    .grid-container .dot { position: relative; z-index: 1; }
+    .frame-svg { position: absolute; pointer-events: none; z-index: 0; overflow: visible; }
     .dot {
       border-radius: 50%;
       background-color: #ccc;
@@ -380,7 +369,7 @@
     <div class="setting-group">
       <label><input type="checkbox" id="hint-toggle" checked> ヒント（おはじき）を出す</label>
       <label><input type="checkbox" id="group-toggle"> おはじきを「まとまり」のわくでかこむ</label>
-      <div style="font-size:14px;color:#666;">おはじきをいくつかのまとまりにわけて、わくでかこみます（わけかたは もんだいごとにランダム）。</div>
+      <div style="font-size:14px;color:#666;">おはじきを 5こ・10こ のまとまり（または おなじかずずつ）の四角でかこみます。のこりはかこみません（わけかたは もんだいごとにランダム）。</div>
     </div>
 
     <div class="setting-group">
@@ -932,40 +921,105 @@
       startListening();
     }
 
-    // まとまりの区切りかたをランダムに決める（例: 8 → [2,2,2,2] / [4,4] / [5,3] / [3,2,3] ...）
-    function getGroupSizes(a, b) {
-      const n = Math.max(a, b);
-      if (n < 4) return null;                       // 少ないときは区切らない
+    // ===== まとまりのわく =====
+    // おはじきを「長方形」のまとまりでかこむ（階段やL字の形にはしない）。かこまないあまりは、そのまま。
+    //  ① 同じ数ずつ:  8×2=16 → 2×2のまとまり4つ / 4×5=20 → 2行×5列のまとまり2つ
+    //  ② 10・5のまとまり+あまり:  7×7=49 → 横長10(2行×5列)を3つ + たて長10(5行×2列)を1つ + あまり9
+    // まとまりは {r, c, h, w} = 上から r行め・左から c列めから、たて h こ × よこ w こ
+    function planGroups(a, b) {
+      const N = a * b;
+      if (N < 6) return null;              // 5こ以下は、かこまない
       const key = a + 'x' + b;
-      if (groupCache[key]) return groupCache[key];
+      if (groupCache[key] !== undefined) return groupCache[key];
 
-      const cands = [];
-      // 同じ数ずつ（2〜5こずつ。ちょうど割り切れるとき）
-      for (let g = 2; g <= 5; g++) if (n % g === 0 && n / g >= 2) cands.push(Array(n / g).fill(g));
-      // 5こずつ + のこり（例: 8 → 5,3）。向きを入れかえた形も
-      if (n > 5) {
-        const t = [];
-        for (let r = n; r > 0; r -= 5) t.push(Math.min(5, r));
-        if (!t.includes(1)) { cands.push(t); cands.push([...t].reverse()); }
-      }
-      // ばらばらの区切り（2〜5このまとまり）
-      for (let k = 0; k < 3; k++) {
-        const out = [];
-        let r = n;
-        while (r > 0) {
-          if (r <= 3) { out.push(r); break; }
-          let sz = Math.min(2 + Math.floor(Math.random() * 4), r);
-          if (r - sz === 1) sz = sz === 5 ? 4 : sz + 1;      // 1こだけ余らないように
-          out.push(sz);
-          r -= sz;
+      const equalPlans = [], blockPlans = [];
+
+      // ① 同じ数ずつ（4〜10こずつ）。たて・よこにきっちり並べられるものだけ
+      for (let g = 4; g <= 10; g++) {
+        if (N % g !== 0 || N / g < 2 || N / g > 10) continue;
+        for (let h = 1; h <= g; h++) {
+          if (g % h !== 0) continue;
+          const w = g / h;
+          if (a % h !== 0 || b % w !== 0) continue;
+          if ((h === 1 && w === b) || (w === 1 && h === a)) continue;   // 1行ずつ・1列ずつは、もともとの並びと同じなので使わない
+          const rects = [];
+          for (let r = 0; r < a; r += h) for (let c = 0; c < b; c += w) rects.push({ r, c, h, w });
+          equalPlans.push({ rects, equal: true });
         }
-        cands.push(out);
       }
-      let valid = cands.filter(g => g.length >= 2 && !g.includes(1));
-      if (valid.length === 0) valid = [[Math.ceil(n / 2), Math.floor(n / 2)]];
-      const pick = valid[Math.floor(Math.random() * valid.length)];
+
+      // ② 10こ（2×5 / 5×2）と 5こ（1×5 / 5×1）の長方形を、左上から順にしきつめる。あまりは9こまで（大きい問題は14こまで）
+      const restMax = N >= 49 ? 14 : 9;
+      const TENS = [[2, 5], [5, 2]], FIVES = [[1, 5], [5, 1]];
+      const pack = (shapeOrder) => {
+        const used = Array.from({ length: a }, () => Array(b).fill(false));
+        const rects = [];
+        for (const [h, w] of shapeOrder) {
+          for (let r = 0; r + h <= a; r++) {
+            for (let c = 0; c + w <= b; c++) {
+              let free = true;
+              for (let i = r; i < r + h && free; i++) for (let j = c; j < c + w; j++) if (used[i][j]) { free = false; break; }
+              if (!free) continue;
+              for (let i = r; i < r + h; i++) for (let j = c; j < c + w; j++) used[i][j] = true;
+              rects.push({ r, c, h, w });
+            }
+          }
+        }
+        return rects;
+      };
+      const seenSig = new Set();
+      const addBlock = (shapeOrder, needTen, needFive, minBoxes) => {
+        const rects = pack(shapeOrder);
+        const area = rects.reduce((n, x) => n + x.h * x.w, 0);
+        const hasTen = rects.some(x => x.h * x.w === 10), hasFive = rects.some(x => x.h * x.w === 5);
+        if (rects.length < minBoxes || rects.length > 8 || N - area > restMax) return;   // わくが多すぎるとかえって見にくい
+        if (rects.every(x => (x.h === 1 && x.w === b) || (x.w === 1 && x.h === a))) return;   // 1行ずつ・1列ずつだけ → もとの並びと同じなので使わない
+        if ((needTen && !hasTen) || (needFive && !hasFive)) return;
+        const sig = JSON.stringify(rects);
+        if (seenSig.has(sig)) return;
+        seenSig.add(sig);
+        blockPlans.push({ rects, equal: false });
+      };
+      for (const [t1, t2] of [[TENS[0], TENS[1]], [TENS[1], TENS[0]]]) {
+        addBlock([t1, t2], true, false, 1);                                        // 10こだけ（あまりをそのまま）
+        addBlock([t1, t2, FIVES[0], FIVES[1]], true, true, 2);                     // 10こ + 5こ
+        addBlock([t1, t2, FIVES[1], FIVES[0]], true, true, 2);
+      }
+      addBlock([FIVES[0], FIVES[1]], false, false, 2);                             // 5こずつだけ
+      addBlock([FIVES[1], FIVES[0]], false, false, 2);
+
+      // 「同じ数ずつ」と「10・5のまとまり+あまり」を半々で出す
+      let pool = Math.random() < 0.5 ? equalPlans : blockPlans;
+      if (!pool.length) pool = equalPlans.length ? equalPlans : blockPlans;
+      const pick = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
       groupCache[key] = pick;
       return pick;
+    }
+
+    // まとまりのわく（おはじきの下にしく線）
+    function buildFrameSvg(plan, a, b, d, cg, rg, pad) {
+      const NS = 'http://www.w3.org/2000/svg';
+      const W = b * d + (b - 1) * cg, H = a * d + (a - 1) * rg;
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('class', 'frame-svg');
+      svg.setAttribute('width', W + pad * 2);
+      svg.setAttribute('height', H + pad * 2);
+      svg.style.left = `${-pad}px`;
+      svg.style.top = `${-pad}px`;
+      const inset = 2.5;   // となりのわくとくっつかないよう、すきまの中に少しひっこめる
+      for (const { r, c, h, w } of plan.rects) {
+        const rect = document.createElementNS(NS, 'rect');
+        rect.setAttribute('x', pad + c * (d + cg) - cg / 2 + inset);
+        rect.setAttribute('y', pad + r * (d + rg) - rg / 2 + inset);
+        rect.setAttribute('width', w * (d + cg) - inset * 2);
+        rect.setAttribute('height', h * (d + rg) - inset * 2);
+        rect.setAttribute('rx', 6);
+        rect.setAttribute('fill', 'none');
+        rect.setAttribute('stroke', '#444');
+        rect.setAttribute('stroke-width', '2');
+        svg.appendChild(rect);
+      }
+      return svg;
     }
 
     // ヒント（おはじき）の描画
@@ -976,64 +1030,39 @@
       const wrapper = document.createElement('div');
       wrapper.className = 'hint-wrapper';
 
-      const colGap = 20;
-      const rowGap = 3;
+      // まとまりのわくがあるときは、線を引くすきまをあけて、まわりに余白をとる
+      const plan = showGroups ? planGroups(a, b) : null;
+      const colGap = plan ? 18 : 20;
+      const rowGap = plan ? 14 : 3;
+      const framePad = plan ? 12 : 0;
+      wrapper.style.padding = `${framePad}px`;
+
       // 括弧の余白(70px程度)を引いて計算
-      const maxWidth = hintArea.clientWidth - 70;
-      const maxHeight = hintArea.clientHeight - 70;
+      const maxWidth = hintArea.clientWidth - 70 - framePad * 2;
+      const maxHeight = hintArea.clientHeight - 70 - framePad * 2;
 
-      // まとまりのわく: 多いほうの向きに、いくつかのまとまりに区切って並べる
-      const sizes = showGroups ? getGroupSizes(a, b) : null;   // null = わくなし
-      const byRows = a >= b;                                    // true: 上から下へ区切る / false: 左から右へ区切る
-      const boxesV = sizes && byRows ? sizes.length : 1;
-      const boxesH = sizes && !byRows ? sizes.length : 1;
-      const inset = sizes ? 6 : 0;                              // わくの線(2px)+内側の余白(4px)
-      const boxGap = sizes ? 8 : 0;                             // わくとわくのすきま
-      const fixedH = (a - boxesV) * rowGap + boxesV * 2 * inset + (boxesV - 1) * boxGap;
-      const fixedW = (b - boxesH) * colGap + boxesH * 2 * inset + (boxesH - 1) * boxGap;
+      const sizeByWidth = b > 0 ? (maxWidth - (b - 1) * colGap) / b : 40;
+      const sizeByHeight = a > 0 ? (maxHeight - (a - 1) * rowGap) / a : 40;
+      const dotSize = Math.max(10, Math.floor(Math.min(sizeByWidth, sizeByHeight, 40)));   // 小数だと1pxずつ大きさがずれて見える
 
-      const sizeByWidth = b > 0 ? (maxWidth - fixedW) / b : 40;
-      const sizeByHeight = a > 0 ? (maxHeight - fixedH) / a : 40;
-      const dotSize = Math.max(10, Math.min(sizeByWidth, sizeByHeight, 40));
+      const grid = document.createElement('div');
+      grid.className = 'grid-container';
+      grid.style.gridTemplateColumns = `repeat(${b}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${a}, 1fr)`;
+      grid.style.columnGap = `${colGap}px`;
+      grid.style.rowGap = `${rowGap}px`;
 
-      const makeDot = (r) => {
-        const dot = document.createElement('div');
-        dot.className = 'dot';
-        dot.style.width = `${dotSize}px`;
-        dot.style.height = `${dotSize}px`;
-        dot.style.backgroundColor = a === 7 ? rainbowColors[r] : colorMap[a];
-        return dot;
-      };
-
-      let grid;
-      if (!sizes) {
-        grid = document.createElement('div');
-        grid.className = 'grid-container';
-        grid.style.gridTemplateColumns = `repeat(${b}, 1fr)`;
-        grid.style.gridTemplateRows = `repeat(${a}, 1fr)`;
-        for (let r = 0; r < a; r++) {
-          for (let c = 0; c < b; c++) grid.appendChild(makeDot(r));
+      for (let r = 0; r < a; r++) {
+        for (let c = 0; c < b; c++) {
+          const dot = document.createElement('div');
+          dot.className = 'dot';
+          dot.style.width = `${dotSize}px`;
+          dot.style.height = `${dotSize}px`;
+          dot.style.backgroundColor = a === 7 ? rainbowColors[r] : colorMap[a];
+          grid.appendChild(dot);
         }
-      } else {
-        grid = document.createElement('div');
-        grid.className = 'group-wrap';
-        grid.style.flexDirection = byRows ? 'column' : 'row';
-        grid.style.gap = `${boxGap}px`;
-        let start = 0;
-        sizes.forEach(sz => {
-          const box = document.createElement('div');
-          box.className = 'group-box';
-          const rows = byRows ? sz : a;
-          const cols = byRows ? b : sz;
-          box.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-          box.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-          for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) box.appendChild(makeDot(byRows ? start + r : r));
-          }
-          grid.appendChild(box);
-          start += sz;
-        });
       }
+      if (plan) grid.appendChild(buildFrameSvg(plan, a, b, dotSize, colGap, rowGap, 12));
 
       // 左側のカッコと数字
       const bracketLeft = document.createElement('div');
